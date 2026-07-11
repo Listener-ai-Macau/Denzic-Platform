@@ -70,6 +70,7 @@ void denzic_ota_v1_reset(denzic_ota_v1_context_t *context)
         return;
     }
     context->expected_size = 0u;
+    context->image_crc32 = 0u;
     context->bytes_written = 0u;
     context->data_write_count = 0u;
     context->chunk_payload_bytes = context->max_chunk_payload_bytes;
@@ -96,6 +97,7 @@ static bool handle_begin(
     uint32_t expected_size;
     uint16_t chunk_payload_bytes;
     uint16_t window_chunks;
+    uint32_t image_crc32;
 
     if (length < DENZIC_OTA_V1_CONTROL_BYTES) {
         set_error(context, DENZIC_OTA_V1_ERROR_BAD_SIZE);
@@ -104,6 +106,7 @@ static bool handle_begin(
     expected_size = read_u32_le(&bytes[8]);
     chunk_payload_bytes = read_u16_le(&bytes[12]);
     window_chunks = read_u16_le(&bytes[14]);
+    image_crc32 = read_u32_le(&bytes[16]);
     if (expected_size == 0u ||
         chunk_payload_bytes == 0u ||
         chunk_payload_bytes > context->max_chunk_payload_bytes) {
@@ -118,12 +121,22 @@ static bool handle_begin(
         return false;
     }
 
-    if (context->state == DENZIC_OTA_V1_STATE_RECEIVING && context->driver.abort != NULL) {
+    if (context->state == DENZIC_OTA_V1_STATE_RECEIVING &&
+        context->expected_size == expected_size &&
+        context->image_crc32 == image_crc32) {
+        context->chunk_payload_bytes = chunk_payload_bytes;
+        context->window_chunks = window_chunks;
+        context->last_error = DENZIC_OTA_V1_ERROR_NONE;
+        return true;
+    }
+    if (context->state == DENZIC_OTA_V1_STATE_RECEIVING &&
+        context->driver.abort != NULL) {
         context->driver.abort(context->driver_context);
     }
     denzic_ota_v1_reset(context);
     context->state = DENZIC_OTA_V1_STATE_ERASING;
     context->expected_size = expected_size;
+    context->image_crc32 = image_crc32;
     context->chunk_payload_bytes = chunk_payload_bytes;
     context->window_chunks = window_chunks;
     if (context->driver.begin == NULL ||

@@ -2,7 +2,7 @@
 pub const PROTOCOL_NAME: &str = "denzic_ota_v1";
 pub const MAGIC: [u8; 4] = *b"DOV1";
 pub const PROTOCOL_VERSION: u8 = 1;
-pub const CONTROL_BYTES: usize = 16;
+pub const CONTROL_BYTES: usize = 20;
 pub const DATA_HEADER_BYTES: usize = 4;
 pub const STATUS_BYTES: usize = 24;
 pub const GATT_SERVICE_UUID: &str = "1b55f597-f09c-4c7f-9529-adfa64983b06";

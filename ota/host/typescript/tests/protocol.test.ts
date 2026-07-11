@@ -16,7 +16,7 @@ import {
 assert.equal(DENZIC_OTA_V1_PROTOCOL_NAME, 'denzic_ota_v1');
 assert.equal(DENZIC_OTA_V1_PROTOCOL_VERSION, 1);
 assert.equal(DENZIC_OTA_V1_MAGIC, 'DOV1');
-assert.equal(DENZIC_OTA_V1_CONTROL_BYTES, 16);
+assert.equal(DENZIC_OTA_V1_CONTROL_BYTES, 20);
 assert.equal(DENZIC_OTA_V1_DATA_HEADER_BYTES, 4);
 assert.equal(DENZIC_OTA_V1_STATUS_BYTES, 24);
 assert.equal(DENZIC_OTA_V1_GATT_SERVICE_UUID, '1b55f597-f09c-4c7f-9529-adfa64983b06');

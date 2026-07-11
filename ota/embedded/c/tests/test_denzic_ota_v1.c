@@ -9,6 +9,8 @@ typedef struct {
     uint32_t expected_size;
     bool aborted;
     bool finished;
+    uint32_t begin_count;
+    uint32_t abort_count;
 } test_storage_t;
 
 static bool storage_begin(void *driver_context, uint32_t image_size)
@@ -18,6 +20,7 @@ static bool storage_begin(void *driver_context, uint32_t image_size)
     storage->expected_size = image_size;
     storage->aborted = false;
     storage->finished = false;
+    storage->begin_count++;
     return image_size <= sizeof(storage->image);
 }
 
@@ -41,7 +44,9 @@ static bool storage_finish(void *driver_context)
 
 static void storage_abort(void *driver_context)
 {
-    ((test_storage_t *)driver_context)->aborted = true;
+    test_storage_t *storage = (test_storage_t *)driver_context;
+    storage->aborted = true;
+    storage->abort_count++;
 }
 
 static void write_u16(uint8_t *bytes, uint16_t value)
@@ -58,7 +63,13 @@ static void write_u32(uint8_t *bytes, uint32_t value)
     bytes[3] = (uint8_t)(value >> 24u);
 }
 
-static void control_packet(uint8_t *packet, uint8_t operation, uint32_t size, uint16_t chunk, uint16_t window)
+static void control_packet(
+    uint8_t *packet,
+    uint8_t operation,
+    uint32_t size,
+    uint16_t chunk,
+    uint16_t window,
+    uint32_t image_crc32)
 {
     memset(packet, 0, DENZIC_OTA_V1_CONTROL_BYTES);
     memcpy(packet, DENZIC_OTA_V1_MAGIC, 4u);
@@ -67,6 +78,7 @@ static void control_packet(uint8_t *packet, uint8_t operation, uint32_t size, ui
     write_u32(&packet[8], size);
     write_u16(&packet[12], chunk);
     write_u16(&packet[14], window);
+    write_u32(&packet[16], image_crc32);
 }
 
 int main(void)
@@ -84,7 +96,7 @@ int main(void)
     uint8_t status[DENZIC_OTA_V1_STATUS_BYTES];
 
     denzic_ota_v1_init(&context, driver, &storage, 5u, 3u);
-    control_packet(control, DENZIC_OTA_V1_OP_BEGIN, 8u, 5u, 3u);
+    control_packet(control, DENZIC_OTA_V1_OP_BEGIN, 8u, 5u, 3u, 0x12345678u);
     assert(denzic_ota_v1_handle_control(&context, control, sizeof(control)));
     assert(context.state == DENZIC_OTA_V1_STATE_RECEIVING);
 
@@ -92,6 +104,13 @@ int main(void)
     memcpy(&data[4], "abcde", 5u);
     assert(denzic_ota_v1_handle_data(&context, data, sizeof(data)));
     assert(context.bytes_written == 5u);
+
+    control_packet(control, DENZIC_OTA_V1_OP_BEGIN, 8u, 4u, 2u, 0x12345678u);
+    assert(denzic_ota_v1_handle_control(&context, control, sizeof(control)));
+    assert(context.bytes_written == 5u);
+    assert(storage.image_size == 5u);
+    assert(storage.begin_count == 1u);
+    assert(storage.abort_count == 0u);
 
     write_u32(data, 7u);
     assert(!denzic_ota_v1_handle_data(&context, data, sizeof(data)));
@@ -104,7 +123,7 @@ int main(void)
     assert(context.bytes_written == 8u);
     assert(context.last_error == DENZIC_OTA_V1_ERROR_NONE);
 
-    control_packet(control, DENZIC_OTA_V1_OP_FINISH, 8u, 5u, 3u);
+    control_packet(control, DENZIC_OTA_V1_OP_FINISH, 8u, 5u, 3u, 0x12345678u);
     assert(denzic_ota_v1_handle_control(&context, control, sizeof(control)));
     assert(storage.finished);
     assert(context.state == DENZIC_OTA_V1_STATE_COMPLETE);
@@ -114,6 +133,19 @@ int main(void)
     assert(status[4] == 1u);
     assert(status[5] == DENZIC_OTA_V1_STATE_COMPLETE);
     assert(status[7] == DENZIC_OTA_V1_STATUS_FLAG_ACTIVE_LINK_CONFIRMED);
+
+    denzic_ota_v1_reset(&context);
+    control_packet(control, DENZIC_OTA_V1_OP_BEGIN, 8u, 5u, 3u, 0x12345678u);
+    assert(denzic_ota_v1_handle_control(&context, control, sizeof(control)));
+    write_u32(data, 0u);
+    memcpy(&data[4], "abcde", 5u);
+    assert(denzic_ota_v1_handle_data(&context, data, sizeof(data)));
+    control_packet(control, DENZIC_OTA_V1_OP_BEGIN, 8u, 5u, 3u, 0x87654321u);
+    assert(denzic_ota_v1_handle_control(&context, control, sizeof(control)));
+    assert(context.bytes_written == 0u);
+    assert(storage.image_size == 0u);
+    assert(storage.abort_count == 1u);
+    assert(storage.begin_count == 3u);
 
     denzic_ota_v1_reset(&context);
     memcpy(control, "BAD!", 4u);

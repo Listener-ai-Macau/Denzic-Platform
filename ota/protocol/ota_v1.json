@@ -2,7 +2,8 @@
   "name": "denzic_ota_v1",
   "version": 1,
   "magic_ascii": "DOV1",
-  "control_bytes": 16,
+  "control_bytes": 20,
+  "image_identity": "crc32_ieee",
   "data_header_bytes": 4,
   "status_bytes": 24,
   "gatt": {

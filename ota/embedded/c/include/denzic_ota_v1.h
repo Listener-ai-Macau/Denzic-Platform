@@ -22,6 +22,7 @@ typedef struct {
     denzic_ota_v1_storage_driver_t driver;
     void *driver_context;
     uint32_t expected_size;
+    uint32_t image_crc32;
     uint32_t bytes_written;
     uint32_t data_write_count;
     uint16_t max_chunk_payload_bytes;

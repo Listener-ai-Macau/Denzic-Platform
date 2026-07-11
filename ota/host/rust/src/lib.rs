@@ -95,6 +95,7 @@ pub fn control_packet(
     expected_size: u32,
     chunk_payload_bytes: u16,
     window_chunks: u16,
+    image_crc32: u32,
 ) -> [u8; CONTROL_BYTES] {
     let mut packet = [0u8; CONTROL_BYTES];
     packet[0..4].copy_from_slice(&MAGIC);
@@ -103,7 +104,20 @@ pub fn control_packet(
     packet[8..12].copy_from_slice(&expected_size.to_le_bytes());
     packet[12..14].copy_from_slice(&chunk_payload_bytes.to_le_bytes());
     packet[14..16].copy_from_slice(&window_chunks.to_le_bytes());
+    packet[16..20].copy_from_slice(&image_crc32.to_le_bytes());
     packet
+}
+
+pub fn crc32_ieee(bytes: &[u8]) -> u32 {
+    let mut crc = u32::MAX;
+    for byte in bytes {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            let mask = 0u32.wrapping_sub(crc & 1);
+            crc = (crc >> 1) ^ (0xedb8_8320 & mask);
+        }
+    }
+    !crc
 }
 
 pub fn data_packet(offset: u32, payload: &[u8]) -> Vec<u8> {
@@ -153,6 +167,7 @@ pub fn transfer<T: OtaV1Transport>(
     if expected_size == 0 {
         return Err("OTA image must not be empty".to_string());
     }
+    let image_crc32 = crc32_ieee(firmware);
 
     let mut report = TransferReport {
         firmware_bytes: firmware.len(),
@@ -166,6 +181,7 @@ pub fn transfer<T: OtaV1Transport>(
         expected_size,
         options.chunk_payload_bytes,
         options.window_chunks,
+        image_crc32,
     );
     transport
         .write_control(&begin)
@@ -213,7 +229,13 @@ pub fn transfer<T: OtaV1Transport>(
             send_offset = end;
         }
 
-        let sync = control_packet(Operation::Sync, expected_size, chunk_bytes, window_chunks);
+        let sync = control_packet(
+            Operation::Sync,
+            expected_size,
+            chunk_bytes,
+            window_chunks,
+            image_crc32,
+        );
         transport
             .write_control(&sync)
             .map_err(|error| abort_after_error(transport, format!("OTA sync failed: {error}")))?;
@@ -269,7 +291,13 @@ pub fn transfer<T: OtaV1Transport>(
         on_progress(confirmed_offset, firmware.len());
     }
 
-    let finish = control_packet(Operation::Finish, expected_size, chunk_bytes, window_chunks);
+    let finish = control_packet(
+        Operation::Finish,
+        expected_size,
+        chunk_bytes,
+        window_chunks,
+        image_crc32,
+    );
     transport
         .write_finish(&finish)
         .map_err(|error| format!("OTA finish failed: {error}"))?;
@@ -346,7 +374,7 @@ fn read_status_with_retry<T: OtaV1Transport>(
 }
 
 fn abort_after_error<T: OtaV1Transport>(transport: &mut T, error: String) -> String {
-    let abort = control_packet(Operation::Abort, 0, 0, 0);
+    let abort = control_packet(Operation::Abort, 0, 0, 0, 0);
     let _ = transport.write_control(&abort);
     error
 }
@@ -358,6 +386,7 @@ mod tests {
     struct MockTransport {
         image: Vec<u8>,
         expected_size: u32,
+        image_crc32: u32,
         chunk_bytes: u16,
         window_chunks: u16,
         state: u8,
@@ -376,6 +405,7 @@ mod tests {
             Self {
                 image: Vec::new(),
                 expected_size: 0,
+                image_crc32: 0,
                 chunk_bytes: 0,
                 window_chunks: 0,
                 state: STATE_IDLE,
@@ -411,11 +441,19 @@ mod tests {
             assert_eq!(&packet[0..4], &MAGIC);
             match packet[4] {
                 OP_BEGIN => {
-                    self.expected_size = u32::from_le_bytes(packet[8..12].try_into().unwrap());
+                    let expected_size = u32::from_le_bytes(packet[8..12].try_into().unwrap());
+                    let image_crc32 = u32::from_le_bytes(packet[16..20].try_into().unwrap());
+                    let same_image = self.state == STATE_RECEIVING
+                        && self.expected_size == expected_size
+                        && self.image_crc32 == image_crc32;
+                    self.expected_size = expected_size;
+                    self.image_crc32 = image_crc32;
                     self.chunk_bytes = u16::from_le_bytes(packet[12..14].try_into().unwrap());
                     self.window_chunks = u16::from_le_bytes(packet[14..16].try_into().unwrap());
                     self.state = STATE_RECEIVING;
-                    self.image.clear();
+                    if !same_image {
+                        self.image.clear();
+                    }
                 }
                 OP_SYNC => {}
                 OP_ABORT => self.aborted = true,
@@ -470,13 +508,15 @@ mod tests {
 
     #[test]
     fn encodes_the_single_v1_wire_contract() {
-        let packet = control_packet(Operation::Begin, 0x1234_5678, 500, 48);
+        let packet = control_packet(Operation::Begin, 0x1234_5678, 500, 48, 0x89ab_cdef);
         assert_eq!(&packet[0..4], b"DOV1");
         assert_eq!(packet[4], OP_BEGIN);
         assert_eq!(packet[5], 1);
         assert_eq!(&packet[8..12], &[0x78, 0x56, 0x34, 0x12]);
         assert_eq!(&packet[12..14], &[0xf4, 0x01]);
         assert_eq!(&packet[14..16], &[0x30, 0x00]);
+        assert_eq!(&packet[16..20], &[0xef, 0xcd, 0xab, 0x89]);
+        assert_eq!(crc32_ieee(b"123456789"), 0xcbf4_3926);
     }
 
     #[test]
@@ -513,5 +553,31 @@ mod tests {
         assert_eq!(transport.image, firmware);
         assert!(transport.finished);
         assert!(report.recovered_offsets >= 1);
+    }
+
+    #[test]
+    fn resumes_an_existing_same_image_session_without_erasing_device_progress() {
+        let firmware: Vec<u8> = (0..31).collect();
+        let existing_bytes = 15usize;
+        let mut transport = MockTransport::new();
+        transport
+            .image
+            .extend_from_slice(&firmware[..existing_bytes]);
+        transport.expected_size = firmware.len() as u32;
+        transport.image_crc32 = crc32_ieee(&firmware);
+        transport.chunk_bytes = options().chunk_payload_bytes;
+        transport.window_chunks = options().window_chunks;
+        transport.state = STATE_RECEIVING;
+
+        let mut progress = Vec::new();
+        let report = transfer(&mut transport, &firmware, options(), |done, total| {
+            progress.push((done, total));
+        })
+        .unwrap();
+
+        assert_eq!(progress.first(), Some(&(existing_bytes, firmware.len())));
+        assert_eq!(transport.image, firmware);
+        assert!(transport.finished);
+        assert!(report.data_writes < 7);
     }
 }
