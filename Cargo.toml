@@ -1,0 +1,3 @@
+[workspace]
+members = ["ota/host/rust"]
+resolver = "2"

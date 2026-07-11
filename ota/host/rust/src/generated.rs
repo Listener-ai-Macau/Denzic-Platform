@@ -1,0 +1,24 @@
+// Generated from ota/protocol/ota_v1.json. Do not edit.
+pub const PROTOCOL_NAME: &str = "denzic_ota_v1";
+pub const MAGIC: [u8; 4] = *b"DOV1";
+pub const PROTOCOL_VERSION: u8 = 1;
+pub const CONTROL_BYTES: usize = 16;
+pub const DATA_HEADER_BYTES: usize = 4;
+pub const STATUS_BYTES: usize = 24;
+pub const OP_BEGIN: u8 = 1;
+pub const OP_SYNC: u8 = 2;
+pub const OP_FINISH: u8 = 3;
+pub const OP_ABORT: u8 = 4;
+pub const STATE_IDLE: u8 = 0;
+pub const STATE_ERASING: u8 = 1;
+pub const STATE_RECEIVING: u8 = 2;
+pub const STATE_COMPLETE: u8 = 3;
+pub const STATE_ERROR: u8 = 4;
+pub const ERROR_NONE: u8 = 0;
+pub const ERROR_BAD_MAGIC: u8 = 1;
+pub const ERROR_BAD_STATE: u8 = 2;
+pub const ERROR_BAD_SIZE: u8 = 3;
+pub const ERROR_OFFSET_MISMATCH: u8 = 4;
+pub const ERROR_STORAGE_WRITE: u8 = 5;
+pub const ERROR_STORAGE_BEGIN: u8 = 6;
+pub const ERROR_STORAGE_FINISH: u8 = 7;

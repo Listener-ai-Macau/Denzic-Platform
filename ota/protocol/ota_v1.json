@@ -1,0 +1,32 @@
+{
+  "name": "denzic_ota_v1",
+  "version": 1,
+  "magic_ascii": "DOV1",
+  "control_bytes": 16,
+  "data_header_bytes": 4,
+  "status_bytes": 24,
+  "operations": {
+    "begin": 1,
+    "sync": 2,
+    "finish": 3,
+    "abort": 4
+  },
+  "states": {
+    "idle": 0,
+    "erasing": 1,
+    "receiving": 2,
+    "complete": 3,
+    "error": 4
+  },
+  "errors": {
+    "none": 0,
+    "bad_magic": 1,
+    "bad_state": 2,
+    "bad_size": 3,
+    "offset_mismatch": 4,
+    "storage_write": 5,
+    "storage_begin": 6,
+    "storage_finish": 7
+  }
+}
+
