@@ -24,7 +24,12 @@ def render_rust(spec):
         f'pub const DATA_HEADER_BYTES: usize = {spec["data_header_bytes"]};',
         f'pub const STATUS_BYTES: usize = {spec["status_bytes"]};',
     ]
-    for group, prefix in (("operations", "OP"), ("states", "STATE"), ("errors", "ERROR")):
+    for group, prefix in (
+        ("status_flags", "STATUS_FLAG"),
+        ("operations", "OP"),
+        ("states", "STATE"),
+        ("errors", "ERROR"),
+    ):
         for name, value in upper_items(spec[group]):
             lines.append(f"pub const {prefix}_{name}: u8 = {value};")
     return "\n".join(lines) + "\n"
@@ -43,7 +48,12 @@ def render_c(spec):
         f'#define DENZIC_OTA_V1_DATA_HEADER_BYTES ({spec["data_header_bytes"]}u)',
         f'#define DENZIC_OTA_V1_STATUS_BYTES ({spec["status_bytes"]}u)',
     ]
-    for group, prefix in (("operations", "OP"), ("states", "STATE"), ("errors", "ERROR")):
+    for group, prefix in (
+        ("status_flags", "STATUS_FLAG"),
+        ("operations", "OP"),
+        ("states", "STATE"),
+        ("errors", "ERROR"),
+    ):
         for name, value in upper_items(spec[group]):
             lines.append(f"#define DENZIC_OTA_V1_{prefix}_{name} ({value}u)")
     lines.extend(["", "#endif", ""])

@@ -108,10 +108,12 @@ int main(void)
     assert(denzic_ota_v1_handle_control(&context, control, sizeof(control)));
     assert(storage.finished);
     assert(context.state == DENZIC_OTA_V1_STATE_COMPLETE);
+    denzic_ota_v1_set_status_flags(&context, DENZIC_OTA_V1_STATUS_FLAG_ACTIVE_LINK_CONFIRMED);
     assert(denzic_ota_v1_encode_status(&context, status, sizeof(status)) == sizeof(status));
     assert(memcmp(status, "DOV1", 4u) == 0);
     assert(status[4] == 1u);
     assert(status[5] == DENZIC_OTA_V1_STATE_COMPLETE);
+    assert(status[7] == DENZIC_OTA_V1_STATUS_FLAG_ACTIVE_LINK_CONFIRMED);
 
     denzic_ota_v1_reset(&context);
     memcpy(control, "COV2", 4u);

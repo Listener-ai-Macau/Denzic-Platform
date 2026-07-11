@@ -5,6 +5,7 @@ pub const PROTOCOL_VERSION: u8 = 1;
 pub const CONTROL_BYTES: usize = 16;
 pub const DATA_HEADER_BYTES: usize = 4;
 pub const STATUS_BYTES: usize = 24;
+pub const STATUS_FLAG_ACTIVE_LINK_CONFIRMED: u8 = 1;
 pub const OP_BEGIN: u8 = 1;
 pub const OP_SYNC: u8 = 2;
 pub const OP_FINISH: u8 = 3;

@@ -5,6 +5,9 @@
   "control_bytes": 16,
   "data_header_bytes": 4,
   "status_bytes": 24,
+  "status_flags": {
+    "active_link_confirmed": 1
+  },
   "operations": {
     "begin": 1,
     "sync": 2,
@@ -29,4 +32,3 @@
     "storage_finish": 7
   }
 }
-

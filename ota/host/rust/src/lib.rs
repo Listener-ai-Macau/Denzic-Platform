@@ -25,11 +25,18 @@ impl Operation {
 pub struct OtaStatus {
     pub state: u8,
     pub last_error: u8,
+    pub flags: u8,
     pub bytes_written: u32,
     pub expected_size: u32,
     pub chunk_payload_bytes: u16,
     pub window_chunks: u16,
     pub data_write_count: u32,
+}
+
+impl OtaStatus {
+    pub fn active_link_confirmed(self) -> bool {
+        self.flags & STATUS_FLAG_ACTIVE_LINK_CONFIRMED != 0
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -38,6 +45,7 @@ pub struct TransferOptions {
     pub window_chunks: u16,
     pub status_read_attempts: u8,
     pub max_stalled_windows: u8,
+    pub inactive_link_window_chunks: Option<u16>,
 }
 
 impl TransferOptions {
@@ -54,6 +62,9 @@ impl TransferOptions {
         if self.max_stalled_windows == 0 {
             return Err("OTA max_stalled_windows must be greater than zero".to_string());
         }
+        if self.inactive_link_window_chunks == Some(0) {
+            return Err("OTA inactive-link window must contain at least one chunk".to_string());
+        }
         Ok(self)
     }
 }
@@ -64,6 +75,7 @@ pub struct TransferReport {
     pub data_writes: u32,
     pub status_reads: u32,
     pub recovered_offsets: u32,
+    pub active_link_confirmed: bool,
 }
 
 pub trait OtaV1Transport {
@@ -120,6 +132,7 @@ pub fn parse_status(bytes: &[u8]) -> Result<OtaStatus, String> {
     Ok(OtaStatus {
         state: bytes[5],
         last_error: bytes[6],
+        flags: bytes[7],
         bytes_written: u32::from_le_bytes(bytes[8..12].try_into().unwrap()),
         expected_size: u32::from_le_bytes(bytes[12..16].try_into().unwrap()),
         chunk_payload_bytes: u16::from_le_bytes(bytes[16..18].try_into().unwrap()),
@@ -146,6 +159,7 @@ pub fn transfer<T: OtaV1Transport>(
         data_writes: 0,
         status_reads: 0,
         recovered_offsets: 0,
+        active_link_confirmed: false,
     };
     let begin = control_packet(
         Operation::Begin,
@@ -161,7 +175,14 @@ pub fn transfer<T: OtaV1Transport>(
         .map_err(|error| abort_after_error(transport, error))?;
     validate_receiving_status(initial, expected_size)?;
     let chunk_bytes = negotiated_nonzero(options.chunk_payload_bytes, initial.chunk_payload_bytes);
-    let window_chunks = negotiated_nonzero(options.window_chunks, initial.window_chunks);
+    let configured_window = negotiated_nonzero(options.window_chunks, initial.window_chunks);
+    let mut active_link_confirmed = initial.active_link_confirmed();
+    let mut window_chunks = limited_window(
+        configured_window,
+        active_link_confirmed,
+        options.inactive_link_window_chunks,
+    );
+    report.active_link_confirmed = active_link_confirmed;
 
     let mut confirmed_offset = initial.bytes_written as usize;
     if confirmed_offset > firmware.len() {
@@ -210,8 +231,28 @@ pub fn transfer<T: OtaV1Transport>(
                 ),
             ));
         }
+        let link_just_became_active = !active_link_confirmed && status.active_link_confirmed();
+        active_link_confirmed = status.active_link_confirmed();
+        report.active_link_confirmed = active_link_confirmed;
         if device_offset != send_offset {
             report.recovered_offsets += 1;
+            if status.last_error == ERROR_OFFSET_MISMATCH {
+                window_chunks = window_chunks.saturating_div(2).max(1);
+            }
+        } else {
+            if active_link_confirmed {
+                window_chunks = if link_just_became_active {
+                    configured_window
+                } else {
+                    window_chunks.saturating_add(1).min(configured_window)
+                };
+            } else {
+                window_chunks = limited_window(
+                    configured_window,
+                    false,
+                    options.inactive_link_window_chunks,
+                );
+            }
         }
         confirmed_offset = device_offset;
         if confirmed_offset <= window_start {
@@ -241,6 +282,14 @@ fn negotiated_nonzero(requested: u16, reported: u16) -> u16 {
         requested
     } else {
         requested.min(reported)
+    }
+}
+
+fn limited_window(configured: u16, active_link: bool, inactive_limit: Option<u16>) -> u16 {
+    if active_link {
+        configured
+    } else {
+        inactive_limit.map_or(configured, |limit| configured.min(limit.max(1)))
     }
 }
 
@@ -313,6 +362,7 @@ mod tests {
         window_chunks: u16,
         state: u8,
         error: u8,
+        flags: u8,
         writes: u32,
         transient_status_failures: u8,
         drop_first_data: bool,
@@ -330,6 +380,7 @@ mod tests {
                 window_chunks: 0,
                 state: STATE_IDLE,
                 error: ERROR_NONE,
+                flags: STATUS_FLAG_ACTIVE_LINK_CONFIRMED,
                 writes: 0,
                 transient_status_failures: 0,
                 drop_first_data: false,
@@ -345,6 +396,7 @@ mod tests {
             bytes[4] = PROTOCOL_VERSION;
             bytes[5] = self.state;
             bytes[6] = self.error;
+            bytes[7] = self.flags;
             bytes[8..12].copy_from_slice(&(self.image.len() as u32).to_le_bytes());
             bytes[12..16].copy_from_slice(&self.expected_size.to_le_bytes());
             bytes[16..18].copy_from_slice(&self.chunk_bytes.to_le_bytes());
@@ -412,6 +464,7 @@ mod tests {
             window_chunks: 3,
             status_read_attempts: 3,
             max_stalled_windows: 3,
+            inactive_link_window_chunks: Some(1),
         }
     }
 
@@ -448,6 +501,7 @@ mod tests {
         assert_eq!(transport.image, firmware);
         assert!(transport.finished);
         assert_eq!(report.firmware_bytes, 31);
+        assert!(report.active_link_confirmed);
         assert!(report.status_reads >= 2);
         assert_eq!(progress.last(), Some(&(31, 31)));
     }

@@ -76,6 +76,16 @@ void denzic_ota_v1_reset(denzic_ota_v1_context_t *context)
     context->window_chunks = context->default_window_chunks;
     context->state = DENZIC_OTA_V1_STATE_IDLE;
     context->last_error = DENZIC_OTA_V1_ERROR_NONE;
+    context->status_flags = 0u;
+}
+
+void denzic_ota_v1_set_status_flags(
+    denzic_ota_v1_context_t *context,
+    uint8_t status_flags)
+{
+    if (context != NULL) {
+        context->status_flags = status_flags;
+    }
 }
 
 static bool handle_begin(
@@ -248,6 +258,7 @@ size_t denzic_ota_v1_encode_status(
     output[4] = DENZIC_OTA_V1_PROTOCOL_VERSION;
     output[5] = context->state;
     output[6] = context->last_error;
+    output[7] = context->status_flags;
     write_u32_le(&output[8], context->bytes_written);
     write_u32_le(&output[12], context->expected_size);
     write_u16_le(&output[16], context->chunk_payload_bytes);

@@ -30,6 +30,7 @@ typedef struct {
     uint16_t window_chunks;
     uint8_t state;
     uint8_t last_error;
+    uint8_t status_flags;
 } denzic_ota_v1_context_t;
 
 void denzic_ota_v1_init(
@@ -40,6 +41,10 @@ void denzic_ota_v1_init(
     uint16_t default_window_chunks);
 
 void denzic_ota_v1_reset(denzic_ota_v1_context_t *context);
+
+void denzic_ota_v1_set_status_flags(
+    denzic_ota_v1_context_t *context,
+    uint8_t status_flags);
 
 bool denzic_ota_v1_handle_control(
     denzic_ota_v1_context_t *context,
@@ -61,4 +66,3 @@ size_t denzic_ota_v1_encode_status(
 #endif
 
 #endif
-
