@@ -15,6 +15,9 @@ try {
     cargo test --workspace
     if ($LASTEXITCODE -ne 0) { throw "Rust workspace tests failed." }
 
+    node --experimental-strip-types .\ota\host\typescript\tests\protocol.test.ts
+    if ($LASTEXITCODE -ne 0) { throw "TypeScript host-core tests failed." }
+
     cmake -S . -B .\build\msvc -G "Visual Studio 17 2022" -A x64
     if ($LASTEXITCODE -ne 0) { throw "CMake configure failed." }
     cmake --build .\build\msvc --config Release

@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SPEC_PATH = ROOT / "ota" / "protocol" / "ota_v1.json"
 RUST_PATH = ROOT / "ota" / "host" / "rust" / "src" / "generated.rs"
 C_PATH = ROOT / "ota" / "embedded" / "c" / "include" / "denzic_ota_v1_generated.h"
+TYPESCRIPT_PATH = ROOT / "ota" / "host" / "typescript" / "src" / "generated.ts"
 
 
 def upper_items(items):
@@ -60,6 +61,21 @@ def render_c(spec):
     return "\n".join(lines)
 
 
+def render_typescript(spec):
+    return "\n".join(
+        [
+            "// Generated from ota/protocol/ota_v1.json. Do not edit.",
+            f"export const DENZIC_OTA_V1_PROTOCOL_NAME = '{spec['name']}' as const;",
+            f"export const DENZIC_OTA_V1_PROTOCOL_VERSION = {spec['version']} as const;",
+            f"export const DENZIC_OTA_V1_MAGIC = '{spec['magic_ascii']}' as const;",
+            f"export const DENZIC_OTA_V1_CONTROL_BYTES = {spec['control_bytes']} as const;",
+            f"export const DENZIC_OTA_V1_DATA_HEADER_BYTES = {spec['data_header_bytes']} as const;",
+            f"export const DENZIC_OTA_V1_STATUS_BYTES = {spec['status_bytes']} as const;",
+            "",
+        ]
+    )
+
+
 def write_or_check(path, expected, check):
     if check:
         actual = path.read_text(encoding="utf-8") if path.exists() else None
@@ -79,6 +95,7 @@ def main():
         raise SystemExit("magic_ascii must be exactly four ASCII bytes")
     write_or_check(RUST_PATH, render_rust(spec), args.check)
     write_or_check(C_PATH, render_c(spec), args.check)
+    write_or_check(TYPESCRIPT_PATH, render_typescript(spec), args.check)
 
 
 if __name__ == "__main__":
