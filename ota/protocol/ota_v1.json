@@ -5,6 +5,12 @@
   "control_bytes": 16,
   "data_header_bytes": 4,
   "status_bytes": 24,
+  "gatt": {
+    "service_uuid": "1b55f597-f09c-4c7f-9529-adfa64983b06",
+    "control_uuid": "206c5e29-c64d-4392-8180-66463788533c",
+    "data_uuid": "fbc4b0fb-6102-4bd1-abe4-e5e90a9a7e12",
+    "status_uuid": "e571544a-7c41-4650-b0d6-ccebfe1db489"
+  },
   "status_flags": {
     "active_link_confirmed": 1
   },
