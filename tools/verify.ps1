@@ -4,8 +4,30 @@ param()
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    throw "PowerShell 7 or newer is required. Run with pwsh -NoProfile -File."
+}
+
 Push-Location $repoRoot
 try {
+    $inventory = Get-Content -LiteralPath .\capabilities.json -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($inventory.schema -ne "denzic.platform.capabilities.v1") {
+        throw "Unsupported capabilities.json schema: $($inventory.schema)"
+    }
+    foreach ($capability in @($inventory.capabilities | Where-Object status -eq "active")) {
+        foreach ($layer in @($inventory.required_layers)) {
+            $paths = @($capability.layers.$layer)
+            if ($paths.Count -eq 0) {
+                throw "Active capability '$($capability.id)' is missing the '$layer' layer."
+            }
+            foreach ($path in $paths) {
+                if (-not (Test-Path -LiteralPath (Join-Path $repoRoot $path) -PathType Leaf)) {
+                    throw "Active capability '$($capability.id)' has missing $layer path: $path"
+                }
+            }
+        }
+    }
+
     python .\tools\generate_ota_v1.py --check
     if ($LASTEXITCODE -ne 0) { throw "OTA generated-source check failed." }
 

@@ -1,0 +1,31 @@
+{
+  "schema": "denzic.platform.capabilities.v1",
+  "required_layers": [
+    "protocol",
+    "host",
+    "embedded"
+  ],
+  "capabilities": [
+    {
+      "id": "ota",
+      "status": "active",
+      "contract": "denzic_ota_v1",
+      "layers": {
+        "protocol": [
+          "ota/protocol/ota_v1.json"
+        ],
+        "host": [
+          "ota/host/rust/src/lib.rs",
+          "ota/host/typescript/src/index.ts"
+        ],
+        "embedded": [
+          "ota/embedded/c/include/denzic_ota_v1.h",
+          "ota/embedded/c/src/denzic_ota_v1.c"
+        ]
+      }
+    }
+  ],
+  "planned": [
+    "audio"
+  ]
+}

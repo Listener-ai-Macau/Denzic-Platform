@@ -3,6 +3,8 @@
 Shared product cores used by Listener, Companion, and future Denzic devices.
 Product repositories pin this repository as a Git submodule. Hardware and OS
 details stay in product adapters; wire protocols and state machines live here.
+`capabilities.json` is the machine-readable inventory: an active capability is
+invalid unless its `protocol`, `host`, and `embedded` layers all exist.
 
 Current modules:
 
