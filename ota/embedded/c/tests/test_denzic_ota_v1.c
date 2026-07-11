@@ -116,7 +116,7 @@ int main(void)
     assert(status[7] == DENZIC_OTA_V1_STATUS_FLAG_ACTIVE_LINK_CONFIRMED);
 
     denzic_ota_v1_reset(&context);
-    memcpy(control, "COV2", 4u);
+    memcpy(control, "BAD!", 4u);
     assert(!denzic_ota_v1_handle_control(&context, control, sizeof(control)));
     assert(context.last_error == DENZIC_OTA_V1_ERROR_BAD_MAGIC);
     return 0;

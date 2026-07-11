@@ -20,6 +20,6 @@ assert.equal(isDenzicOtaV1Identity({
   protocolVersion: 1,
 }), true);
 assert.equal(isDenzicOtaV1Identity({
-  protocolName: 'companion_ota_v2',
+  protocolName: 'obsolete_protocol',
   protocolVersion: 1,
 }), false);

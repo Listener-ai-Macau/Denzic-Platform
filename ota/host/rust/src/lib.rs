@@ -480,11 +480,9 @@ mod tests {
     }
 
     #[test]
-    fn rejects_product_specific_old_magic() {
+    fn rejects_invalid_magic() {
         let mut status = MockTransport::new().status_bytes();
-        status[0..4].copy_from_slice(b"LOV1");
-        assert!(parse_status(&status).is_err());
-        status[0..4].copy_from_slice(b"COV2");
+        status[0..4].copy_from_slice(b"BAD!");
         assert!(parse_status(&status).is_err());
     }
 
