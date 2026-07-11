@@ -36,6 +36,7 @@ def render_rust(spec):
     ]
     for name, value in gatt_items(spec):
         lines.append(f'pub const GATT_{name}_UUID: &str = "{value}";')
+        lines.append(f"pub const GATT_{name}_UUID_U128: u128 = 0x{uuid.UUID(value).int:032x};")
     for group, prefix in (
         ("status_flags", "STATUS_FLAG"),
         ("operations", "OP"),
