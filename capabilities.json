@@ -23,9 +23,23 @@
           "ota/embedded/c/src/denzic_ota_v1.c"
         ]
       }
+    },
+    {
+      "id": "audio",
+      "status": "active",
+      "contract": "denzic_audio_v1",
+      "layers": {
+        "protocol": [
+          "audio/protocol/audio_v1.json"
+        ],
+        "host": [
+          "audio/host/rust/src/lib.rs"
+        ],
+        "embedded": [
+          "audio/embedded/c/include/denzic_audio_v1_generated.h"
+        ]
+      }
     }
   ],
-  "planned": [
-    "audio"
-  ]
+  "planned": []
 }

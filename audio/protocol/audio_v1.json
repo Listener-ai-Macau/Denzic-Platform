@@ -1,0 +1,29 @@
+{
+  "name": "denzic_audio_v1",
+  "magic_ascii": "VKA1",
+  "version": 1,
+  "header_bytes": 20,
+  "pcm": {
+    "sample_rate_hz": 16000,
+    "channels": 1,
+    "sample_width_bits": 16
+  },
+  "packet_types": {
+    "session_start": 1,
+    "audio_data": 2,
+    "session_stop": 3,
+    "session_cancel": 4,
+    "session_error": 5
+  },
+  "session_errors": {
+    "none": 0,
+    "queue_full": 1,
+    "notify_timeout": 2,
+    "link_lost": 3,
+    "sequence_overflow": 4,
+    "invalid_state": 5,
+    "no_memory": 6,
+    "packet_too_large": 7,
+    "transport": 8
+  }
+}

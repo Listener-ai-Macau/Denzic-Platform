@@ -11,7 +11,7 @@ Current modules:
 - `ota/host/`: desktop-side package and transfer core.
 - `ota/embedded/`: device-side protocol and storage state machine.
 - `ota/protocol/`: the single wire contract used by both sides.
-- `audio/host/` and `audio/embedded/`: reserved for the shared recording pipeline.
+- `audio/host/` and `audio/embedded/`: shared VKA1 recording packet and session core.
 
 Run the repository checks with:
 

@@ -31,6 +31,9 @@ try {
     python .\tools\generate_ota_v1.py --check
     if ($LASTEXITCODE -ne 0) { throw "OTA generated-source check failed." }
 
+    python .\tools\generate_audio_v1.py --check
+    if ($LASTEXITCODE -ne 0) { throw "Audio generated-source check failed." }
+
     cargo fmt --all -- --check
     if ($LASTEXITCODE -ne 0) { throw "Rust formatting check failed." }
 
