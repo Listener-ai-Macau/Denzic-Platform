@@ -24,7 +24,6 @@ int main(void)
     assert(header.chunk_index_le == 7u);
     assert(header.fragment_index == 0u);
     assert(header.fragment_count == 1u);
-    assert(header.reserved_le == DENZIC_AUDIO_V1_PROTOCOL_VERSION);
     assert(DENZIC_AUDIO_V1_PCM_BYTES_PER_SECOND == 32000u);
     return 0;
 }

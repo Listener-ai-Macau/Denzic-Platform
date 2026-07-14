@@ -57,7 +57,6 @@ typedef struct DENZIC_AUDIO_V1_PACKED {
     uint8_t fragment_count;
     uint16_t payload_len_le;
     uint16_t chunk_pcm_bytes_le;
-    uint32_t reserved_le;
 } denzic_audio_v1_packet_header_t;
 #if defined(_MSC_VER)
 #pragma pack(pop)
@@ -89,9 +88,6 @@ static inline void denzic_audio_v1_packet_header_init(
     header->fragment_count = fragment_count;
     header->payload_len_le = payload_len;
     header->chunk_pcm_bytes_le = chunk_pcm_bytes;
-    header->reserved_le = (packet_type == DENZIC_AUDIO_V1_PACKET_TYPE_SESSION_START)
-                              ? DENZIC_AUDIO_V1_PROTOCOL_VERSION
-                              : 0u;
 }
 
 #ifdef __cplusplus
