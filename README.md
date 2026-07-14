@@ -13,6 +13,12 @@ Current modules:
 - `ota/protocol/`: the single wire contract used by both sides.
 - `audio/host/` and `audio/embedded/`: shared VKA1 recording packet and session core.
 
+The portable C recording core under `audio/embedded/c` owns recording state,
+session transitions, PCM batch accounting, and format metadata. Product
+firmware supplies scheduler, capture, storage, transport, input, and diagnostic
+adapters. ESP-IDF I2S, STM32 HAL SAI, FreeRTOS, QSPI, BLE, and GPIO stay out of
+the shared core.
+
 Run the repository checks with:
 
 ```powershell
