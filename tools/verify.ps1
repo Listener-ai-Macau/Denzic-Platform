@@ -37,6 +37,12 @@ try {
     python .\tools\generate_observability_v1.py --check
     if ($LASTEXITCODE -ne 0) { throw "Observability generated-source check failed." }
 
+    python .\tools\verify_adapter_compatibility.py --manifest .\compatibility\listener_adapter_v1.json
+    if ($LASTEXITCODE -ne 0) { throw "Supported adapter compatibility check failed." }
+
+    python .\tools\verify_adapter_compatibility.py --manifest .\compatibility\listener_adapter_unsupported_ota.json --expect-rejected
+    if ($LASTEXITCODE -ne 0) { throw "Unsupported adapter compatibility check did not reject the declaration." }
+
     cargo fmt --all -- --check
     if ($LASTEXITCODE -ne 0) { throw "Rust formatting check failed." }
 
