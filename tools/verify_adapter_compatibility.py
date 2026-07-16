@@ -32,11 +32,14 @@ def resolve_contracts():
             raise ValueError(f"{capability.get('id')} contract identity does not match its protocol source")
         resolved[capability["id"]] = {"contract": contract, "version": spec["version"]}
 
+    device_control = resolved.get("device_control")
+    if device_control is None:
+        raise ValueError("device_control contract is required for a device adapter")
     observability = resolved.get("observability")
     if observability is None:
-        raise ValueError("observability contract is required to identify the BLE lifecycle")
+        raise ValueError("observability contract is required for correlated adapter evidence")
     return {
-        "ble": observability,
+        "device_control": device_control,
         "audio": resolved["audio"],
         "ota": resolved["ota"],
         "observability": observability,

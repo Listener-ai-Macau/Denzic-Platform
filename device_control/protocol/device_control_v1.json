@@ -1,0 +1,61 @@
+{
+  "name": "denzic_device_control_v1",
+  "version": 1,
+  "transports": [
+    { "name": "unknown", "code": 0 },
+    { "name": "ble", "code": 1 },
+    { "name": "usb", "code": 2 },
+    { "name": "wifi", "code": 3 },
+    { "name": "serial", "code": 4 },
+    { "name": "other", "code": 255 }
+  ],
+  "lifecycle_states": [
+    { "name": "unknown", "code": 0 },
+    { "name": "disconnected", "code": 1 },
+    { "name": "discovering", "code": 2 },
+    { "name": "connecting", "code": 3 },
+    { "name": "securing", "code": 4 },
+    { "name": "ready", "code": 5 },
+    { "name": "recovering", "code": 6 },
+    { "name": "owned_elsewhere", "code": 7 },
+    { "name": "failed", "code": 8 }
+  ],
+  "ownership_states": [
+    { "name": "unknown", "code": 0 },
+    { "name": "unpaired", "code": 1 },
+    { "name": "local", "code": 2 },
+    { "name": "manual_unpaired", "code": 3 },
+    { "name": "external", "code": 4 }
+  ],
+  "operation_kinds": [
+    { "name": "unknown", "code": 0 },
+    { "name": "discover", "code": 1 },
+    { "name": "connect", "code": 2 },
+    { "name": "secure", "code": 3 },
+    { "name": "read_capabilities", "code": 4 },
+    { "name": "read_setting", "code": 5 },
+    { "name": "write_setting", "code": 6 },
+    { "name": "invoke_command", "code": 7 }
+  ],
+  "operation_results": [
+    { "name": "accepted", "code": 1 },
+    { "name": "succeeded", "code": 2 },
+    { "name": "rejected", "code": 3 },
+    { "name": "cancelled", "code": 4 },
+    { "name": "timed_out", "code": 5 },
+    { "name": "transport_lost", "code": 6 },
+    { "name": "failed", "code": 7 }
+  ],
+  "error_categories": [
+    { "name": "none", "code": 0 },
+    { "name": "device", "code": 1 },
+    { "name": "transport", "code": 2 },
+    { "name": "security", "code": 3 },
+    { "name": "host", "code": 4 },
+    { "name": "protocol", "code": 5 },
+    { "name": "ownership", "code": 6 },
+    { "name": "unsupported", "code": 7 },
+    { "name": "timeout", "code": 8 },
+    { "name": "resource", "code": 9 }
+  ]
+}

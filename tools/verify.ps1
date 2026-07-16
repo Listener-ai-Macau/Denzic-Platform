@@ -34,6 +34,9 @@ try {
     python .\tools\generate_audio_v1.py --check
     if ($LASTEXITCODE -ne 0) { throw "Audio generated-source check failed." }
 
+    python .\tools\generate_device_control_v1.py --check
+    if ($LASTEXITCODE -ne 0) { throw "Device-control generated-source check failed." }
+
     python .\tools\generate_observability_v1.py --check
     if ($LASTEXITCODE -ne 0) { throw "Observability generated-source check failed." }
 

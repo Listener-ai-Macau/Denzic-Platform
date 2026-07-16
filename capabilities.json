@@ -7,6 +7,23 @@
   ],
   "capabilities": [
     {
+      "id": "device_control",
+      "status": "active",
+      "contract": "denzic_device_control_v1",
+      "layers": {
+        "protocol": [
+          "device_control/protocol/device_control_v1.json"
+        ],
+        "host": [
+          "device_control/host/rust/src/lib.rs"
+        ],
+        "embedded": [
+          "device_control/embedded/c/include/denzic_device_control_v1.h",
+          "device_control/embedded/c/src/denzic_device_control_v1.c"
+        ]
+      }
+    },
+    {
       "id": "ota",
       "status": "active",
       "contract": "denzic_ota_v1",

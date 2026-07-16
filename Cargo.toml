@@ -1,3 +1,8 @@
 [workspace]
-members = ["audio/host/rust", "ota/host/rust", "observability/host/rust"]
+members = [
+    "audio/host/rust",
+    "device_control/host/rust",
+    "ota/host/rust",
+    "observability/host/rust",
+]
 resolver = "2"

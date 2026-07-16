@@ -1,7 +1,7 @@
 {
   "adapter": "listener",
   "contracts": {
-    "ble": { "contract": "denzic_observability_v1", "version": 1 },
+    "device_control": { "contract": "denzic_device_control_v1", "version": 1 },
     "audio": { "contract": "denzic_audio_v1", "version": 1 },
     "ota": { "contract": "denzic_ota_v1", "version": 1 },
     "observability": { "contract": "denzic_observability_v1", "version": 1 }

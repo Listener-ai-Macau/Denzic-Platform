@@ -1,0 +1,11 @@
+add_library(denzic_device_control_embedded STATIC
+    src/denzic_device_control_v1.c
+)
+target_include_directories(denzic_device_control_embedded PUBLIC include)
+target_compile_features(denzic_device_control_embedded PUBLIC c_std_99)
+
+add_executable(denzic_device_control_embedded_test
+    tests/test_denzic_device_control_v1.c
+)
+target_link_libraries(denzic_device_control_embedded_test PRIVATE denzic_device_control_embedded)
+add_test(NAME denzic_device_control_embedded_test COMMAND denzic_device_control_embedded_test)
