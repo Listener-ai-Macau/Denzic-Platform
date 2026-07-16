@@ -12,6 +12,7 @@ Current modules:
 - `ota/embedded/`: device-side protocol and storage state machine.
 - `ota/protocol/`: the single wire contract used by both sides.
 - `audio/host/` and `audio/embedded/`: shared VKA1 recording packet and session core.
+- `observability/`: versioned BLE lifecycle and cross-capability event envelope for firmware and host adapters.
 
 The portable C recording core under `audio/embedded/c` owns recording state,
 session transitions, PCM batch accounting, and format metadata. Product

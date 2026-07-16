@@ -1,0 +1,57 @@
+{
+  "name": "denzic_observability_v1",
+  "version": 1,
+  "event_sources": [
+    { "name": "firmware", "code": 1 },
+    { "name": "type", "code": 2 },
+    { "name": "transport", "code": 3 },
+    { "name": "provider", "code": 4 }
+  ],
+  "capabilities": [
+    { "name": "ble", "code": 1 },
+    { "name": "audio", "code": 2 },
+    { "name": "ota", "code": 3 }
+  ],
+  "ble_lifecycle_states": [
+    { "name": "unknown", "code": 0 },
+    { "name": "disconnected", "code": 1 },
+    { "name": "advertising", "code": 2 },
+    { "name": "connecting", "code": 3 },
+    { "name": "connected_idle", "code": 4 },
+    { "name": "recording", "code": 5 },
+    { "name": "recovering", "code": 6 },
+    { "name": "paired_elsewhere", "code": 7 }
+  ],
+  "command_results": [
+    { "name": "started", "code": 1 },
+    { "name": "succeeded", "code": 2 },
+    { "name": "cancelled", "code": 3 },
+    { "name": "failed", "code": 4 },
+    { "name": "timeout", "code": 5 }
+  ],
+  "error_categories": [
+    { "name": "none", "code": 0 },
+    { "name": "device", "code": 1 },
+    { "name": "transport", "code": 2 },
+    { "name": "host", "code": 3 },
+    { "name": "provider", "code": 4 },
+    { "name": "network", "code": 5 },
+    { "name": "protocol", "code": 6 },
+    { "name": "resource", "code": 7 }
+  ],
+  "timing_metrics": [
+    { "name": "none", "code": 0 },
+    { "name": "edge_to_record_dispatch_ms", "code": 1 },
+    { "name": "ble_recovery_ms", "code": 2 },
+    { "name": "audio_first_packet_ms", "code": 3 },
+    { "name": "preview_latency_ms", "code": 4 },
+    { "name": "final_transcription_ms", "code": 5 },
+    { "name": "ota_transfer_ms", "code": 6 }
+  ],
+  "event_envelope": {
+    "correlation_id": "u64 opaque identifier shared across device, transport, host, and provider events",
+    "event_sequence": "u32 source-local sequence ordered within a correlation id",
+    "monotonic_ms": "u32 source-local monotonic timestamp; cross-source comparison uses causal order plus paired timing metrics",
+    "timing_value_ms": "u32 value for timing_metric, zero only when timing_metric is none"
+  }
+}

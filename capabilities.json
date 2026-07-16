@@ -39,6 +39,22 @@
           "audio/embedded/c/include/denzic_audio_v1_generated.h"
         ]
       }
+    },
+    {
+      "id": "observability",
+      "status": "active",
+      "contract": "denzic_observability_v1",
+      "layers": {
+        "protocol": [
+          "observability/protocol/observability_v1.json"
+        ],
+        "host": [
+          "observability/host/rust/src/lib.rs"
+        ],
+        "embedded": [
+          "observability/embedded/c/include/denzic_observability_v1_generated.h"
+        ]
+      }
     }
   ],
   "planned": []
