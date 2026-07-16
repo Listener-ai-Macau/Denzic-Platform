@@ -11,6 +11,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "denzic-observability-v1-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "denzic-ota-core"
 version = "0.1.0"
 
