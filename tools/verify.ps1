@@ -43,6 +43,9 @@ try {
     python .\tools\verify_adapter_compatibility.py --manifest .\compatibility\listener_adapter_unsupported_ota.json --expect-rejected
     if ($LASTEXITCODE -ne 0) { throw "Unsupported adapter compatibility check did not reject the declaration." }
 
+    python .\tools\verify_observability_adapter_docs.py
+    if ($LASTEXITCODE -ne 0) { throw "Observability adapter documentation check failed." }
+
     cargo fmt --all -- --check
     if ($LASTEXITCODE -ne 0) { throw "Rust formatting check failed." }
 
