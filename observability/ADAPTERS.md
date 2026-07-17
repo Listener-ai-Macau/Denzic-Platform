@@ -9,7 +9,9 @@ append-only: adapters do not replace a causal event with a rendered message.
 - Firmware creates `correlation_id` once for a physical input, BLE recovery, or
   OTA operation and includes it in every event it emits for that operation.
 - Type preserves the received `correlation_id`; Type-created work starts a new
-  non-zero identifier and carries it through transport and provider events.
+  non-zero host-generated opaque identifier for every operation and carries it
+  through transport and provider events. A process restart must not reuse the
+  first operation's identifier.
 - `event_sequence` is monotonically increasing only within one source and one
   `correlation_id`. It orders local events but is not a global clock.
 - `monotonic_ms` is source-local. Compare firmware and Type events by shared
