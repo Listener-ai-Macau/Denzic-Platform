@@ -69,7 +69,10 @@
           "observability/host/rust/src/lib.rs"
         ],
         "embedded": [
-          "observability/embedded/c/include/denzic_observability_v1_generated.h"
+          "observability/embedded/c/include/denzic_observability_v1_generated.h",
+          "observability/embedded/c/include/denzic_diag_log_store.h",
+          "observability/embedded/c/include/denzic_diag_log_store_port.h",
+          "observability/embedded/c/src/denzic_diag_log_store.c"
         ]
       }
     }
