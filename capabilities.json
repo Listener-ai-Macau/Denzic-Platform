@@ -58,6 +58,22 @@
       }
     },
     {
+      "id": "ble_windows",
+      "status": "active",
+      "contract": "denzic_ble_windows_v1",
+      "layers": {
+        "protocol": [
+          "ble_windows/protocol/ble_windows_v1.json"
+        ],
+        "host": [
+          "ble_windows/host/rust/src/lib.rs"
+        ],
+        "embedded": [
+          "ble_windows/embedded/c/include/denzic_ble_windows_v1_generated.h"
+        ]
+      }
+    },
+    {
       "id": "observability",
       "status": "active",
       "contract": "denzic_observability_v1",

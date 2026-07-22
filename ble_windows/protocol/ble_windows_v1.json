@@ -1,0 +1,26 @@
+{
+  "name": "denzic_ble_windows_v1",
+  "version": 1,
+  "default_discovery_timeout_ms": 15000,
+  "optional_read_timeout_ms": 2000,
+  "cccd_enable_timeout_ms": 8000,
+  "cccd_enable_retry_delays_ms": [250, 750, 1500],
+  "async_poll_interval_ms": 25,
+  "create_no_window_flag": 134217728,
+  "failure_kinds": [
+    { "name": "device_missing", "code": 0 },
+    { "name": "device_asleep", "code": 1 },
+    { "name": "missing_pairing", "code": 2 },
+    { "name": "low_power_idle_disconnect", "code": 3 },
+    { "name": "paired_but_disconnected", "code": 4 },
+    { "name": "stale_gatt_service", "code": 5 },
+    { "name": "cccd_protocol_error", "code": 6 },
+    { "name": "missing_dis_firmware_revision", "code": 7 },
+    { "name": "background_contention", "code": 8 },
+    { "name": "ota_reboot_window", "code": 9 },
+    { "name": "windows_bluetooth_service_reset_needed", "code": 10 },
+    { "name": "access_denied", "code": 11 },
+    { "name": "unsupported_platform", "code": 12 },
+    { "name": "unknown", "code": 13 }
+  ]
+}
