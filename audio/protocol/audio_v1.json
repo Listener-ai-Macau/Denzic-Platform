@@ -25,5 +25,40 @@
     "no_memory": 6,
     "packet_too_large": 7,
     "transport": 8
+  },
+  "lossless_rice": {
+    "packet_flag": 1,
+    "header_bytes": 6,
+    "max_k": 15,
+    "max_zigzag_residual": 1048560,
+    "versions": {
+      "v1": 1,
+      "v2": 2,
+      "v3": 3
+    },
+    "predictors": {
+      "first_order": 1,
+      "second_order": 2,
+      "third_order": 3,
+      "fourth_order": 4
+    },
+    "v1_predictor": 2,
+    "v1_seed_samples": 2,
+    "v2_max_predictor": 2,
+    "v2_seed_samples": 2,
+    "v2_parameter_k_span": 1,
+    "v3_max_predictor": 4,
+    "v3_seed_samples": "predictor_order",
+    "v3_predictor_sample_stride": 16,
+    "control_byte": {
+      "v1": "rice_k in low byte; predictor is fixed second order",
+      "v2": "high nibble = predictor order (1..2), low nibble = rice_k",
+      "v3": "high nibble = predictor order (1..4, also the seed count), low nibble = rice_k"
+    },
+    "seed_sample_byte_order": "little_endian_i16",
+    "zigzag_mapping": "residual >= 0 -> 2*residual; residual < 0 -> -2*residual - 1",
+    "residual_coding": "unary quotient (zero bits terminated by a one bit) followed by k remainder bits, LSB first",
+    "bit_order": "lsb_first_within_byte",
+    "pcm_sample_byte_order": "little_endian_i16"
   }
 }

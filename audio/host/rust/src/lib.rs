@@ -13,6 +13,8 @@ use thiserror::Error;
 
 mod generated;
 
+pub mod lossless_v1;
+
 pub use generated::{
     HEADER_LEN, MAGIC, MAGIC_U32, PCM_BYTES_PER_SECOND, PCM_CHANNELS, PCM_SAMPLE_RATE_HZ,
     PCM_SAMPLE_WIDTH_BITS, PROTOCOL_NAME, PROTOCOL_VERSION,

@@ -11,7 +11,7 @@ Current modules:
 - `ota/host/`: desktop-side package and transfer core.
 - `ota/embedded/`: device-side protocol and storage state machine.
 - `ota/protocol/`: the single wire contract used by both sides.
-- `audio/host/` and `audio/embedded/`: shared VKA1 recording packet and session core.
+- `audio/host/` and `audio/embedded/`: shared VKA1 recording packet, session, and lossless Rice codec core.
 - `observability/`: versioned BLE lifecycle and cross-capability event envelope for firmware and host adapters,
   plus the portable sector-based diagnostic log flash store (`embedded/c/src/denzic_diag_log_store.c`)
   whose storage, time, locking, and output hooks are injected by product adapters.

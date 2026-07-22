@@ -50,10 +50,12 @@
           "audio/protocol/audio_v1.json"
         ],
         "host": [
-          "audio/host/rust/src/lib.rs"
+          "audio/host/rust/src/lib.rs",
+          "audio/host/rust/src/lossless_v1.rs"
         ],
         "embedded": [
-          "audio/embedded/c/include/denzic_audio_v1_generated.h"
+          "audio/embedded/c/include/denzic_audio_v1_generated.h",
+          "audio/embedded/c/include/denzic_audio_lossless_v1.h"
         ]
       }
     },
