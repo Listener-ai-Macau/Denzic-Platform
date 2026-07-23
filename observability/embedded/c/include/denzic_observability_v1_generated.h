@@ -65,6 +65,21 @@ typedef enum {
     DENZIC_OBSERVABILITY_V1_TIMING_METRIC_OTA_TRANSFER_MS = 6,
 } denzic_observability_v1_timing_metric_t;
 
+/* BLE diagnostic log GATT service contract. The data characteristic notifies
+ * one chunk per control read: a chunk header (event_count u16 LE,
+ * global_offset u32 LE, events_crc32 u32 LE, CRC-32/IEEE over the payload)
+ * followed by event_count packed DIAG_LOG_EVENT_WIRE_BYTES events. */
+#define DENZIC_OBSERVABILITY_V1_DIAG_LOG_GATT_SERVICE_UUID_TEXT "710af845-6d9f-6583-0c4d-9e5b3bc3093a"
+#define DENZIC_OBSERVABILITY_V1_DIAG_LOG_GATT_SERVICE_UUID_BYTES 0x3a, 0x09, 0xc3, 0x3b, 0x5b, 0x9e, 0x4d, 0x0c, 0x83, 0x65, 0x9f, 0x6d, 0x45, 0xf8, 0x0a, 0x71
+#define DENZIC_OBSERVABILITY_V1_DIAG_LOG_GATT_CONTROL_UUID_TEXT "710af845-6d9f-6583-0c4d-9e5b3bc3093b"
+#define DENZIC_OBSERVABILITY_V1_DIAG_LOG_GATT_CONTROL_UUID_BYTES 0x3b, 0x09, 0xc3, 0x3b, 0x5b, 0x9e, 0x4d, 0x0c, 0x83, 0x65, 0x9f, 0x6d, 0x45, 0xf8, 0x0a, 0x71
+#define DENZIC_OBSERVABILITY_V1_DIAG_LOG_GATT_DATA_UUID_TEXT "710af845-6d9f-6583-0c4d-9e5b3bc3093c"
+#define DENZIC_OBSERVABILITY_V1_DIAG_LOG_GATT_DATA_UUID_BYTES 0x3c, 0x09, 0xc3, 0x3b, 0x5b, 0x9e, 0x4d, 0x0c, 0x83, 0x65, 0x9f, 0x6d, 0x45, 0xf8, 0x0a, 0x71
+#define DENZIC_OBSERVABILITY_V1_DIAG_LOG_GATT_COUNT_UUID_TEXT "710af845-6d9f-6583-0c4d-9e5b3bc3093d"
+#define DENZIC_OBSERVABILITY_V1_DIAG_LOG_GATT_COUNT_UUID_BYTES 0x3d, 0x09, 0xc3, 0x3b, 0x5b, 0x9e, 0x4d, 0x0c, 0x83, 0x65, 0x9f, 0x6d, 0x45, 0xf8, 0x0a, 0x71
+#define DENZIC_OBSERVABILITY_V1_DIAG_LOG_EVENT_WIRE_BYTES (24u)
+#define DENZIC_OBSERVABILITY_V1_DIAG_LOG_CHUNK_HEADER_BYTES (10u)
+
 typedef struct {
     uint8_t contract_version;
     uint64_t correlation_id;

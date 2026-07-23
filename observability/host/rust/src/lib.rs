@@ -30,6 +30,77 @@ pub fn new_host_correlation_id() -> u64 {
     value.max(1)
 }
 
+/// One decoded BLE diagnostic log chunk notification
+/// (`ble_diag_log_gatt` in `observability_v1.json`). `payload` borrows the
+/// notified packet and holds `event_count` packed events of
+/// `DIAG_LOG_EVENT_WIRE_BYTES` each. The CRC-32/IEEE over the payload is
+/// returned for the caller to verify; parsing does not check it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiagLogChunk<'a> {
+    pub event_count: u16,
+    pub global_offset: u32,
+    pub events_crc32: u32,
+    pub payload: &'a [u8],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiagLogChunkError {
+    TooShort {
+        packet_len: usize,
+    },
+    EmptyChunk,
+    PayloadLengthMismatch {
+        event_count: u16,
+        actual: usize,
+        expected: usize,
+    },
+}
+
+/// Writes the chunk header (event_count u16 LE, global_offset u32 LE,
+/// events_crc32 u32 LE) into `out`, which must hold at least
+/// `DIAG_LOG_CHUNK_HEADER_BYTES` bytes.
+pub fn encode_diag_log_chunk_header(
+    out: &mut [u8],
+    event_count: u16,
+    global_offset: u32,
+    events_crc32: u32,
+) {
+    assert!(out.len() >= DIAG_LOG_CHUNK_HEADER_BYTES);
+    out[0..2].copy_from_slice(&event_count.to_le_bytes());
+    out[2..6].copy_from_slice(&global_offset.to_le_bytes());
+    out[6..10].copy_from_slice(&events_crc32.to_le_bytes());
+}
+
+/// Decodes one chunk notification. `global_offset` is the absolute
+/// retained-log offset of the first event and stays 32-bit so exports do not
+/// truncate after 65535 events.
+pub fn parse_diag_log_chunk(packet: &[u8]) -> Result<DiagLogChunk<'_>, DiagLogChunkError> {
+    if packet.len() < DIAG_LOG_CHUNK_HEADER_BYTES {
+        return Err(DiagLogChunkError::TooShort {
+            packet_len: packet.len(),
+        });
+    }
+    let event_count = u16::from_le_bytes([packet[0], packet[1]]);
+    if event_count == 0 {
+        return Err(DiagLogChunkError::EmptyChunk);
+    }
+    let payload = &packet[DIAG_LOG_CHUNK_HEADER_BYTES..];
+    let expected = usize::from(event_count) * DIAG_LOG_EVENT_WIRE_BYTES;
+    if payload.len() != expected {
+        return Err(DiagLogChunkError::PayloadLengthMismatch {
+            event_count,
+            actual: payload.len(),
+            expected,
+        });
+    }
+    Ok(DiagLogChunk {
+        event_count,
+        global_offset: u32::from_le_bytes([packet[2], packet[3], packet[4], packet[5]]),
+        events_crc32: u32::from_le_bytes([packet[6], packet[7], packet[8], packet[9]]),
+        payload,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -80,5 +151,47 @@ mod tests {
         assert_ne!(first, 0);
         assert_ne!(second, 0);
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn diag_log_chunk_round_trips_with_u32_offset() {
+        let mut packet = vec![0u8; DIAG_LOG_CHUNK_HEADER_BYTES + 2 * DIAG_LOG_EVENT_WIRE_BYTES];
+        encode_diag_log_chunk_header(&mut packet, 2, 70000, 0xdead_beef);
+        for byte in &mut packet[DIAG_LOG_CHUNK_HEADER_BYTES..] {
+            *byte = 0x5a;
+        }
+
+        let chunk = parse_diag_log_chunk(&packet).expect("valid chunk");
+        assert_eq!(chunk.event_count, 2);
+        assert_eq!(chunk.global_offset, 70000);
+        assert_eq!(chunk.events_crc32, 0xdead_beef);
+        assert_eq!(chunk.payload.len(), 2 * DIAG_LOG_EVENT_WIRE_BYTES);
+        assert!(chunk.payload.iter().all(|byte| *byte == 0x5a));
+    }
+
+    #[test]
+    fn diag_log_chunk_rejects_malformed_packets() {
+        let mut packet = vec![0u8; DIAG_LOG_CHUNK_HEADER_BYTES + DIAG_LOG_EVENT_WIRE_BYTES];
+
+        assert_eq!(
+            parse_diag_log_chunk(&packet[..DIAG_LOG_CHUNK_HEADER_BYTES - 1]),
+            Err(DiagLogChunkError::TooShort {
+                packet_len: DIAG_LOG_CHUNK_HEADER_BYTES - 1
+            })
+        );
+        assert_eq!(
+            parse_diag_log_chunk(&packet[..DIAG_LOG_CHUNK_HEADER_BYTES]),
+            Err(DiagLogChunkError::EmptyChunk)
+        );
+
+        encode_diag_log_chunk_header(&mut packet, 2, 0, 0);
+        assert_eq!(
+            parse_diag_log_chunk(&packet),
+            Err(DiagLogChunkError::PayloadLengthMismatch {
+                event_count: 2,
+                actual: DIAG_LOG_EVENT_WIRE_BYTES,
+                expected: 2 * DIAG_LOG_EVENT_WIRE_BYTES,
+            })
+        );
     }
 }

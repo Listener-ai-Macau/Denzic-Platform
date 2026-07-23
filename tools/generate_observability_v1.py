@@ -2,6 +2,7 @@
 import argparse
 import json
 import re
+import uuid
 from pathlib import Path
 
 
@@ -18,6 +19,10 @@ ENUMS = (
     ("error_categories", "ErrorCategory", "error_category"),
     ("timing_metrics", "TimingMetric", "timing_metric"),
 )
+
+DIAG_LOG_GATT_UUID_KEYS = ("service_uuid", "control_uuid", "data_uuid", "count_uuid")
+DIAG_LOG_GATT_SIZE_KEYS = ("event_wire_bytes", "chunk_header_bytes")
+DIAG_LOG_GATT_CONTROL_OPS = ("start", "read", "stop")
 
 
 def pascal(name):
@@ -55,6 +60,36 @@ def validate_spec(spec):
     if "none" not in {item["name"] for item in spec["timing_metrics"]}:
         raise SystemExit("timing_metrics must include none")
 
+    gatt = spec.get("ble_diag_log_gatt")
+    if not isinstance(gatt, dict):
+        raise SystemExit("ble_diag_log_gatt must be an object")
+    seen_uuids = set()
+    for key in DIAG_LOG_GATT_UUID_KEYS:
+        value = gatt.get(key)
+        try:
+            parsed = uuid.UUID(value if isinstance(value, str) else "")
+        except (ValueError, AttributeError, TypeError) as error:
+            raise SystemExit(
+                f"ble_diag_log_gatt.{key} must be a canonical UUID: {error}"
+            ) from error
+        if str(parsed) != value or parsed in seen_uuids:
+            raise SystemExit(f"ble_diag_log_gatt.{key} must be lowercase canonical and unique")
+        seen_uuids.add(parsed)
+    for key in DIAG_LOG_GATT_SIZE_KEYS:
+        value = gatt.get(key)
+        if not isinstance(value, int) or value <= 0:
+            raise SystemExit(f"ble_diag_log_gatt.{key} must be a positive integer")
+    if gatt.get("control_ops") != list(DIAG_LOG_GATT_CONTROL_OPS):
+        raise SystemExit(f"ble_diag_log_gatt.control_ops must be {list(DIAG_LOG_GATT_CONTROL_OPS)}")
+    for key in ("chunk_header_layout", "count_value", "pull_semantics"):
+        value = gatt.get(key)
+        if not isinstance(value, str) or not value:
+            raise SystemExit(f"ble_diag_log_gatt.{key} must be a non-empty string")
+
+
+def c_uuid_bytes(value):
+    return ", ".join(f"0x{byte:02x}" for byte in reversed(uuid.UUID(value).bytes))
+
 
 def render_rust_enum(items, rust_type):
     lines = [
@@ -66,6 +101,26 @@ def render_rust_enum(items, rust_type):
     for item in items:
         lines.append(f"    {pascal(item['name'])} = {item['code']},")
     lines.append("}")
+    return lines
+
+
+def render_rust_gatt_constants(spec):
+    gatt = spec["ble_diag_log_gatt"]
+    lines = [
+        "// BLE diagnostic log GATT service contract. The data characteristic",
+        "// notifies one chunk per control read: a DIAG_LOG_CHUNK_HEADER_BYTES",
+        "// header (event_count u16 LE, global_offset u32 LE, events_crc32 u32 LE,",
+        "// CRC-32/IEEE over the payload) followed by event_count packed events of",
+        "// DIAG_LOG_EVENT_WIRE_BYTES each.",
+    ]
+    for key in DIAG_LOG_GATT_UUID_KEYS:
+        symbol = f"DIAG_LOG_GATT_{c_symbol(key)}"
+        value = uuid.UUID(gatt[key])
+        lines.append(f'pub const {symbol}: &str = "{value}";')
+        lines.append(f"pub const {symbol}_U128: u128 = 0x{value.int:032x};")
+    lines.append(f"pub const DIAG_LOG_EVENT_WIRE_BYTES: usize = {gatt['event_wire_bytes']};")
+    lines.append(f"pub const DIAG_LOG_CHUNK_HEADER_BYTES: usize = {gatt['chunk_header_bytes']};")
+    lines.append("")
     return lines
 
 
@@ -81,6 +136,7 @@ def render_rust(spec):
     for key, rust_type, _ in ENUMS:
         lines.extend(render_rust_enum(spec[key], rust_type))
         lines.append("")
+    lines.extend(render_rust_gatt_constants(spec))
     lines.extend([
         "#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]",
         "pub struct EventEnvelope {",
@@ -154,6 +210,28 @@ def render_c_enum(items, c_type, c_prefix):
     return lines
 
 
+def render_c_gatt_constants(spec):
+    gatt = spec["ble_diag_log_gatt"]
+    lines = [
+        "/* BLE diagnostic log GATT service contract. The data characteristic notifies",
+        " * one chunk per control read: a chunk header (event_count u16 LE,",
+        " * global_offset u32 LE, events_crc32 u32 LE, CRC-32/IEEE over the payload)",
+        " * followed by event_count packed DIAG_LOG_EVENT_WIRE_BYTES events. */",
+    ]
+    for key in DIAG_LOG_GATT_UUID_KEYS:
+        symbol = f"DENZIC_OBSERVABILITY_V1_DIAG_LOG_GATT_{c_symbol(key)}"
+        lines.append(f'#define {symbol}_TEXT "{gatt[key]}"')
+        lines.append(f"#define {symbol}_BYTES {c_uuid_bytes(gatt[key])}")
+    lines.append(
+        f"#define DENZIC_OBSERVABILITY_V1_DIAG_LOG_EVENT_WIRE_BYTES ({gatt['event_wire_bytes']}u)"
+    )
+    lines.append(
+        f"#define DENZIC_OBSERVABILITY_V1_DIAG_LOG_CHUNK_HEADER_BYTES ({gatt['chunk_header_bytes']}u)"
+    )
+    lines.append("")
+    return lines
+
+
 def render_c(spec):
     lines = [
         "/* Generated from observability/protocol/observability_v1.json. Do not edit. */",
@@ -174,6 +252,7 @@ def render_c(spec):
     for key, _, c_type in ENUMS:
         lines.extend(render_c_enum(spec[key], c_type, c_symbol(c_type)))
         lines.append("")
+    lines.extend(render_c_gatt_constants(spec))
     lines.extend([
         "typedef struct {",
         "    uint8_t contract_version;",

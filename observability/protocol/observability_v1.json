@@ -53,5 +53,21 @@
     "event_sequence": "u32 source-local sequence ordered within a correlation id",
     "monotonic_ms": "u32 source-local monotonic timestamp; cross-source comparison uses causal order plus paired timing metrics",
     "timing_value_ms": "u32 value for timing_metric, zero only when timing_metric is none"
+  },
+  "ble_diag_log_gatt": {
+    "service_uuid": "710af845-6d9f-6583-0c4d-9e5b3bc3093a",
+    "control_uuid": "710af845-6d9f-6583-0c4d-9e5b3bc3093b",
+    "data_uuid": "710af845-6d9f-6583-0c4d-9e5b3bc3093c",
+    "count_uuid": "710af845-6d9f-6583-0c4d-9e5b3bc3093d",
+    "event_wire_bytes": 24,
+    "chunk_header_bytes": 10,
+    "chunk_header_layout": "event_count u16 LE, global_offset u32 LE, events_crc32 u32 LE (CRC-32/IEEE over the packed event payload)",
+    "control_ops": [
+      "start",
+      "read",
+      "stop"
+    ],
+    "count_value": "read returns JSON {\"count\":N} with the number of retained events",
+    "pull_semantics": "host subscribes to data notifications, writes {\"op\":\"start\"} to control, then for each chunk writes {\"op\":\"read\",\"offset\":N} and receives one data notification carrying chunk_header_bytes header plus event_count packed event_wire_bytes events; host writes {\"op\":\"stop\"} to end the session"
   }
 }

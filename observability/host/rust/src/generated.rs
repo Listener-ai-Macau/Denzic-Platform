@@ -75,6 +75,22 @@ pub enum TimingMetric {
     OtaTransferMs = 6,
 }
 
+// BLE diagnostic log GATT service contract. The data characteristic
+// notifies one chunk per control read: a DIAG_LOG_CHUNK_HEADER_BYTES
+// header (event_count u16 LE, global_offset u32 LE, events_crc32 u32 LE,
+// CRC-32/IEEE over the payload) followed by event_count packed events of
+// DIAG_LOG_EVENT_WIRE_BYTES each.
+pub const DIAG_LOG_GATT_SERVICE_UUID: &str = "710af845-6d9f-6583-0c4d-9e5b3bc3093a";
+pub const DIAG_LOG_GATT_SERVICE_UUID_U128: u128 = 0x710af8456d9f65830c4d9e5b3bc3093a;
+pub const DIAG_LOG_GATT_CONTROL_UUID: &str = "710af845-6d9f-6583-0c4d-9e5b3bc3093b";
+pub const DIAG_LOG_GATT_CONTROL_UUID_U128: u128 = 0x710af8456d9f65830c4d9e5b3bc3093b;
+pub const DIAG_LOG_GATT_DATA_UUID: &str = "710af845-6d9f-6583-0c4d-9e5b3bc3093c";
+pub const DIAG_LOG_GATT_DATA_UUID_U128: u128 = 0x710af8456d9f65830c4d9e5b3bc3093c;
+pub const DIAG_LOG_GATT_COUNT_UUID: &str = "710af845-6d9f-6583-0c4d-9e5b3bc3093d";
+pub const DIAG_LOG_GATT_COUNT_UUID_U128: u128 = 0x710af8456d9f65830c4d9e5b3bc3093d;
+pub const DIAG_LOG_EVENT_WIRE_BYTES: usize = 24;
+pub const DIAG_LOG_CHUNK_HEADER_BYTES: usize = 10;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventEnvelope {
     pub contract_version: u8,
