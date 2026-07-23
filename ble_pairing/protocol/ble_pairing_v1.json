@@ -1,0 +1,48 @@
+{
+  "name": "denzic_ble_pairing_v1",
+  "version": 1,
+  "semantics": "ble_pairing_v1.md",
+  "timing_defaults": {
+    "recovery_pairing_window_ms": 120000,
+    "recovery_swift_pair_prompt_window_ms": 45000,
+    "first_pairing_window_ms": 0,
+    "swift_pair_adv_min_restart_ms": 1000,
+    "recovery_bond_delete_wait_ms": 2000,
+    "recovery_advertising_command_target_ms": 250
+  },
+  "hci": {
+    "nimble_hci_status_base": 512,
+    "remote_user_terminated_reason": 19,
+    "host_deliberate_disconnect_status": 531
+  },
+  "disconnect_classifications": [
+    { "name": "transient_link_loss", "code": 1 },
+    { "name": "host_deliberate_unpair", "code": 2 },
+    { "name": "local_request", "code": 3 }
+  ],
+  "advertising_after_disconnect": [
+    { "name": "suppress", "code": 1 },
+    { "name": "undirected_only", "code": 2 },
+    { "name": "directed_reconnect", "code": 3 }
+  ],
+  "identity_actions": [
+    { "name": "keep_stable", "code": 1 },
+    { "name": "rotate_fresh", "code": 2 },
+    { "name": "defer_rotate_until_disconnect", "code": 3 }
+  ],
+  "window_close_decisions": [
+    { "name": "keep_open", "code": 1 },
+    { "name": "close_now", "code": 2 }
+  ],
+  "security_failure_actions": [
+    { "name": "retry_within_window", "code": 1 },
+    { "name": "open_repair_window", "code": 2 }
+  ],
+  "swift_pair_prompt_evaluations": [
+    { "name": "active", "code": 1 },
+    { "name": "suppressed", "code": 2 },
+    { "name": "consumed", "code": 3 },
+    { "name": "disabled", "code": 4 },
+    { "name": "expired", "code": 5 }
+  ]
+}

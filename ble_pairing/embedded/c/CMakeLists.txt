@@ -1,0 +1,11 @@
+add_library(denzic_ble_pairing_embedded STATIC
+    src/denzic_ble_pairing_v1.c
+)
+target_include_directories(denzic_ble_pairing_embedded PUBLIC include)
+target_compile_features(denzic_ble_pairing_embedded PUBLIC c_std_99)
+
+add_executable(denzic_ble_pairing_embedded_test
+    tests/test_denzic_ble_pairing_v1.c
+)
+target_link_libraries(denzic_ble_pairing_embedded_test PRIVATE denzic_ble_pairing_embedded)
+add_test(NAME denzic_ble_pairing_embedded_test COMMAND denzic_ble_pairing_embedded_test)

@@ -37,7 +37,33 @@ def render_rust(spec):
         lines.append(f"pub const PACKET_TYPE_{name}: u8 = {value};")
     for name, value in upper_items(spec["session_errors"]):
         lines.append(f"pub const SESSION_ERROR_{name}: u16 = {value};")
+    rice = spec.get("lossless_rice")
+    if rice is not None:
+        lines.extend(render_rust_lossless_rice(rice))
     return "\n".join(lines) + "\n"
+
+
+def render_rust_lossless_rice(rice):
+    lines = [
+        f'pub const LOSSLESS_RICE_PACKET_FLAG: u8 = 0x{rice["packet_flag"]:02x};',
+        f'pub const LOSSLESS_RICE_HEADER_BYTES: usize = {rice["header_bytes"]};',
+        f'pub const LOSSLESS_RICE_MAX_K: u8 = {rice["max_k"]};',
+        f'pub const LOSSLESS_RICE_MAX_ZIGZAG_RESIDUAL: u32 = {rice["max_zigzag_residual"]};',
+    ]
+    for name, value in upper_items(rice["versions"]):
+        lines.append(f"pub const LOSSLESS_RICE_VERSION_{name}: u8 = {value};")
+    for name, value in upper_items(rice["predictors"]):
+        lines.append(f"pub const LOSSLESS_RICE_PREDICTOR_{name}: u8 = {value};")
+    lines.extend([
+        f'pub const LOSSLESS_RICE_V1_PREDICTOR: u8 = {rice["v1_predictor"]};',
+        f'pub const LOSSLESS_RICE_V1_SEED_SAMPLES: usize = {rice["v1_seed_samples"]};',
+        f'pub const LOSSLESS_RICE_V2_MAX_PREDICTOR: u8 = {rice["v2_max_predictor"]};',
+        f'pub const LOSSLESS_RICE_V2_SEED_SAMPLES: usize = {rice["v2_seed_samples"]};',
+        f'pub const LOSSLESS_RICE_V2_PARAMETER_K_SPAN: u8 = {rice["v2_parameter_k_span"]};',
+        f'pub const LOSSLESS_RICE_V3_MAX_PREDICTOR: u8 = {rice["v3_max_predictor"]};',
+        f'pub const LOSSLESS_RICE_V3_PREDICTOR_SAMPLE_STRIDE: u16 = {rice["v3_predictor_sample_stride"]};',
+    ])
+    return lines
 
 
 def render_c(spec):
@@ -79,6 +105,12 @@ def render_c(spec):
     lines.extend([
         "} denzic_audio_v1_session_error_t;",
         "",
+    ])
+    rice = spec.get("lossless_rice")
+    if rice is not None:
+        lines.extend(render_c_lossless_rice(rice))
+        lines.append("")
+    lines.extend([
         "#if defined(_MSC_VER)",
         "#pragma pack(push, 1)",
         "#define DENZIC_AUDIO_V1_PACKED",
@@ -139,6 +171,57 @@ def render_c(spec):
     return "\n".join(lines)
 
 
+def render_c_lossless_rice(rice):
+    lines = [
+        f'#define DENZIC_AUDIO_V1_LOSSLESS_RICE_PACKET_FLAG (0x{rice["packet_flag"]:02x}u)',
+        f'#define DENZIC_AUDIO_V1_LOSSLESS_RICE_HEADER_BYTES ({rice["header_bytes"]}u)',
+        f'#define DENZIC_AUDIO_V1_LOSSLESS_RICE_MAX_K ({rice["max_k"]}u)',
+        f'#define DENZIC_AUDIO_V1_LOSSLESS_RICE_MAX_ZIGZAG_RESIDUAL ({rice["max_zigzag_residual"]}u)',
+    ]
+    for name, value in upper_items(rice["versions"]):
+        lines.append(f"#define DENZIC_AUDIO_V1_LOSSLESS_RICE_VERSION_{name} ({value}u)")
+    for name, value in upper_items(rice["predictors"]):
+        lines.append(f"#define DENZIC_AUDIO_V1_LOSSLESS_RICE_PREDICTOR_{name} ({value}u)")
+    lines.extend([
+        f'#define DENZIC_AUDIO_V1_LOSSLESS_RICE_V1_PREDICTOR ({rice["v1_predictor"]}u)',
+        f'#define DENZIC_AUDIO_V1_LOSSLESS_RICE_V1_SEED_SAMPLES ({rice["v1_seed_samples"]}u)',
+        f'#define DENZIC_AUDIO_V1_LOSSLESS_RICE_V2_MAX_PREDICTOR ({rice["v2_max_predictor"]}u)',
+        f'#define DENZIC_AUDIO_V1_LOSSLESS_RICE_V2_SEED_SAMPLES ({rice["v2_seed_samples"]}u)',
+        f'#define DENZIC_AUDIO_V1_LOSSLESS_RICE_V2_PARAMETER_K_SPAN ({rice["v2_parameter_k_span"]}u)',
+        f'#define DENZIC_AUDIO_V1_LOSSLESS_RICE_V3_MAX_PREDICTOR ({rice["v3_max_predictor"]}u)',
+        f'#define DENZIC_AUDIO_V1_LOSSLESS_RICE_V3_PREDICTOR_SAMPLE_STRIDE ({rice["v3_predictor_sample_stride"]}u)',
+    ])
+    return lines
+
+
+def validate_lossless_rice(spec):
+    rice = spec.get("lossless_rice")
+    if rice is None:
+        return
+    versions = rice["versions"]
+    if versions != {"v1": 1, "v2": 2, "v3": 3}:
+        raise SystemExit("lossless rice versions must remain v1=1, v2=2, v3=3")
+    predictors = rice["predictors"]
+    if predictors != {"first_order": 1, "second_order": 2, "third_order": 3, "fourth_order": 4}:
+        raise SystemExit("lossless rice predictor orders must remain 1..4")
+    if rice["packet_flag"] != 1 or rice["packet_flag"] > 0xFF:
+        raise SystemExit("lossless rice packet flag must remain 0x01")
+    if rice["header_bytes"] != 6:
+        raise SystemExit("lossless rice header_bytes must remain 6")
+    if not 0 < rice["max_k"] < 16:
+        raise SystemExit("lossless rice max_k must stay within the 4-bit control nibble")
+    if rice["v1_predictor"] != predictors["second_order"]:
+        raise SystemExit("lossless rice v1 predictor must remain second order")
+    if rice["v2_max_predictor"] != predictors["second_order"]:
+        raise SystemExit("lossless rice v2 predictor range must stay within first..second order")
+    if rice["v3_max_predictor"] != predictors["fourth_order"]:
+        raise SystemExit("lossless rice v3 predictor range must stay within first..fourth order")
+    if rice["v1_seed_samples"] != 2 or rice["v2_seed_samples"] != 2:
+        raise SystemExit("lossless rice v1/v2 must carry exactly two seed samples")
+    if rice["v3_seed_samples"] != "predictor_order":
+        raise SystemExit("lossless rice v3 seed count must equal the predictor order")
+
+
 def write_or_check(path, expected, check):
     if check:
         actual = path.read_text(encoding="utf-8") if path.exists() else None
@@ -160,6 +243,7 @@ def main():
         raise SystemExit("audio v1 header_bytes must remain 20")
     if spec["pcm"]["sample_rate_hz"] <= 0 or spec["pcm"]["channels"] <= 0:
         raise SystemExit("audio PCM sample rate and channels must be positive")
+    validate_lossless_rice(spec)
     write_or_check(RUST_PATH, render_rust(spec), args.check)
     write_or_check(C_PATH, render_c(spec), args.check)
 

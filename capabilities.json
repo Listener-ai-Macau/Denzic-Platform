@@ -60,6 +60,23 @@
       }
     },
     {
+      "id": "ble_pairing",
+      "status": "active",
+      "contract": "denzic_ble_pairing_v1",
+      "layers": {
+        "protocol": [
+          "ble_pairing/protocol/ble_pairing_v1.json"
+        ],
+        "host": [
+          "ble_pairing/host/rust/src/lib.rs"
+        ],
+        "embedded": [
+          "ble_pairing/embedded/c/include/denzic_ble_pairing_v1.h",
+          "ble_pairing/embedded/c/src/denzic_ble_pairing_v1.c"
+        ]
+      }
+    },
+    {
       "id": "ble_windows",
       "status": "active",
       "contract": "denzic_ble_windows_v1",

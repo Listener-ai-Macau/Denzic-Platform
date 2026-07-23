@@ -37,6 +37,9 @@ try {
     python .\tools\generate_ble_windows_v1.py --check
     if ($LASTEXITCODE -ne 0) { throw "BLE Windows generated-source check failed." }
 
+    python .\tools\generate_ble_pairing_v1.py --check
+    if ($LASTEXITCODE -ne 0) { throw "BLE pairing generated-source check failed." }
+
     python .\tools\generate_device_control_v1.py --check
     if ($LASTEXITCODE -ne 0) { throw "Device-control generated-source check failed." }
 
