@@ -57,5 +57,16 @@
     { "name": "unsupported", "code": 7 },
     { "name": "timeout", "code": 8 },
     { "name": "resource", "code": 9 }
-  ]
+  ],
+  "settings_revision": {
+    "characteristic_uuid": "710af845-6d9f-6583-0c4d-9e5b3bc3091f",
+    "value_schema": "listener.device_settings.v1",
+    "value_field": "settings_revision"
+  },
+  "ec11_recovery": {
+    "notice": "listener-ec11-recovery-v1",
+    "prepare_notice": "listener-ec11-recovery-prepare-v1",
+    "ack": "TYPE:EC11:RECOVERY:ACK",
+    "prepare_ack": "TYPE:EC11:RECOVERY:PREPARE:ACK"
+  }
 }

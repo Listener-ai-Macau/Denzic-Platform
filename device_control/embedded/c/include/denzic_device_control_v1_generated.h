@@ -74,6 +74,17 @@ typedef enum {
     DENZIC_DEVICE_CONTROL_V1_ERROR_CATEGORY_RESOURCE = 9,
 } denzic_device_control_v1_error_category_t;
 
+#define DENZIC_DEVICE_CONTROL_V1_SETTINGS_REVISION_UUID_TEXT "710af845-6d9f-6583-0c4d-9e5b3bc3091f"
+#define DENZIC_DEVICE_CONTROL_V1_SETTINGS_REVISION_UUID_BYTES 0x1f, 0x09, 0xc3, 0x3b, 0x5b, 0x9e, 0x4d, 0x0c, 0x83, 0x65, 0x9f, 0x6d, 0x45, 0xf8, 0x0a, 0x71
+#define DENZIC_DEVICE_CONTROL_V1_SETTINGS_REVISION_VALUE_SCHEMA "listener.device_settings.v1"
+#define DENZIC_DEVICE_CONTROL_V1_SETTINGS_REVISION_VALUE_FIELD "settings_revision"
+
+/* EC11 recovery handshake tokens; host acknowledgements are line-feed terminated. */
+#define DENZIC_DEVICE_CONTROL_V1_EC11_RECOVERY_NOTICE "listener-ec11-recovery-v1"
+#define DENZIC_DEVICE_CONTROL_V1_EC11_RECOVERY_PREPARE_NOTICE "listener-ec11-recovery-prepare-v1"
+#define DENZIC_DEVICE_CONTROL_V1_EC11_RECOVERY_ACK "TYPE:EC11:RECOVERY:ACK"
+#define DENZIC_DEVICE_CONTROL_V1_EC11_RECOVERY_PREPARE_ACK "TYPE:EC11:RECOVERY:PREPARE:ACK"
+
 #ifdef __cplusplus
 }
 #endif

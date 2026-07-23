@@ -84,3 +84,18 @@ pub enum ErrorCategory {
     Timeout = 8,
     Resource = 9,
 }
+
+pub const SETTINGS_REVISION_CHARACTERISTIC_UUID: &str = "710af845-6d9f-6583-0c4d-9e5b3bc3091f";
+pub const SETTINGS_REVISION_CHARACTERISTIC_UUID_U128: u128 = 0x710af8456d9f65830c4d9e5b3bc3091f;
+pub const SETTINGS_REVISION_VALUE_SCHEMA: &str = "listener.device_settings.v1";
+pub const SETTINGS_REVISION_VALUE_FIELD: &str = "settings_revision";
+
+// EC11 recovery handshake tokens. Notices are notified by the device;
+// acknowledgements are written by the host with a trailing line feed,
+// which the device strips before matching the token.
+pub const EC11_RECOVERY_NOTICE: &[u8] = b"listener-ec11-recovery-v1";
+pub const EC11_RECOVERY_PREPARE_NOTICE: &[u8] = b"listener-ec11-recovery-prepare-v1";
+pub const EC11_RECOVERY_ACK: &[u8] = b"TYPE:EC11:RECOVERY:ACK";
+pub const EC11_RECOVERY_ACK_WRITE: &[u8] = b"TYPE:EC11:RECOVERY:ACK\n";
+pub const EC11_RECOVERY_PREPARE_ACK: &[u8] = b"TYPE:EC11:RECOVERY:PREPARE:ACK";
+pub const EC11_RECOVERY_PREPARE_ACK_WRITE: &[u8] = b"TYPE:EC11:RECOVERY:PREPARE:ACK\n";

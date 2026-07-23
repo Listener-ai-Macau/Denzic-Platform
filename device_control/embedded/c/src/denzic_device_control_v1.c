@@ -1,5 +1,7 @@
 #include "denzic_device_control_v1.h"
 
+#include <inttypes.h>
+#include <stdio.h>
 #include <string.h>
 
 static denzic_device_control_v1_decision_t decision(
@@ -372,4 +374,56 @@ bool denzic_device_control_v1_confirm_setting_readback(
         DENZIC_DEVICE_CONTROL_V1_OPERATION_RESULT_SUCCEEDED,
         DENZIC_DEVICE_CONTROL_V1_ERROR_CATEGORY_NONE);
     return true;
+}
+
+bool denzic_device_control_v1_format_settings_revision(
+    char *out,
+    size_t out_size,
+    uint32_t revision)
+{
+    int written;
+
+    if (out == NULL || out_size == 0u) {
+        return false;
+    }
+    out[0] = '\0';
+    if (revision == 0u) {
+        return false;
+    }
+    written = snprintf(
+        out,
+        out_size,
+        "schema=" DENZIC_DEVICE_CONTROL_V1_SETTINGS_REVISION_VALUE_SCHEMA
+        ";" DENZIC_DEVICE_CONTROL_V1_SETTINGS_REVISION_VALUE_FIELD "=%" PRIu32,
+        revision);
+    if (written < 0 || (size_t)written >= out_size) {
+        out[0] = '\0';
+        return false;
+    }
+    return true;
+}
+
+static bool token_matches(const uint8_t *data, size_t len, const char *token)
+{
+    size_t token_len;
+
+    if (data == NULL || token == NULL) {
+        return false;
+    }
+    token_len = strlen(token);
+    return len == token_len && memcmp(data, token, token_len) == 0;
+}
+
+bool denzic_device_control_v1_is_ec11_recovery_notice(
+    const uint8_t *data,
+    size_t len)
+{
+    return token_matches(data, len, DENZIC_DEVICE_CONTROL_V1_EC11_RECOVERY_NOTICE);
+}
+
+bool denzic_device_control_v1_is_ec11_recovery_prepare_notice(
+    const uint8_t *data,
+    size_t len)
+{
+    return token_matches(data, len, DENZIC_DEVICE_CONTROL_V1_EC11_RECOVERY_PREPARE_NOTICE);
 }

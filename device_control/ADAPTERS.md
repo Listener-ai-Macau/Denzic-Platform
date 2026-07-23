@@ -62,6 +62,19 @@ separate `denzic_observability_v1` envelope carries correlation IDs, timing,
 source attribution, and emitted evidence. Device control must not delay or
 replace those events.
 
+## Wire Contracts
+
+`protocol/device_control_v1.json` also pins two concrete wire surfaces that
+product adapters used to hardcode on both sides:
+
+- `settings_revision`: the read-only settings-revision Property. The
+  characteristic UUID, the `schema=<value_schema>;<value_field>=<revision>`
+  value layout, and the non-zero u32 revision rule are generated into the Rust
+  and C surfaces (`format`/`parse_settings_revision_value` helpers).
+- `ec11_recovery`: the EC11 hardware recovery handshake tokens. The device
+  notifies `notice`/`prepare_notice`; the host writes `ack`/`prepare_ack` with
+  a trailing line feed, which the device strips before matching the token.
+
 ## Research Basis
 
 - W3C Thing Description 2.0 defines the portable Property, Action, and Event

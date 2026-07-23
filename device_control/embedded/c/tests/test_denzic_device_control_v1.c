@@ -1,6 +1,7 @@
 #include "denzic_device_control_v1.h"
 
 #include <assert.h>
+#include <string.h>
 
 static denzic_device_control_v1_request_t request(
     uint64_t operation_id,
@@ -101,5 +102,24 @@ int main(void)
     assert(denzic_device_control_v1_expire(&context, 71u));
     outcome = denzic_device_control_v1_begin(&context, &value, 72u);
     assert(outcome.result == DENZIC_DEVICE_CONTROL_V1_OPERATION_RESULT_TIMED_OUT && outcome.replayed);
+
+    {
+        char revision_value[80];
+        char too_small[8];
+        static const uint8_t notice[] = "listener-ec11-recovery-v1";
+        static const uint8_t prepare_notice[] = "listener-ec11-recovery-prepare-v1";
+
+        assert(denzic_device_control_v1_format_settings_revision(revision_value, sizeof(revision_value), 42u));
+        assert(strcmp(revision_value, "schema=listener.device_settings.v1;settings_revision=42") == 0);
+        assert(!denzic_device_control_v1_format_settings_revision(too_small, sizeof(too_small), 42u));
+        assert(too_small[0] == '\0');
+        assert(!denzic_device_control_v1_format_settings_revision(revision_value, sizeof(revision_value), 0u));
+
+        assert(denzic_device_control_v1_is_ec11_recovery_notice(notice, sizeof(notice) - 1u));
+        assert(!denzic_device_control_v1_is_ec11_recovery_notice(prepare_notice, sizeof(prepare_notice) - 1u));
+        assert(denzic_device_control_v1_is_ec11_recovery_prepare_notice(prepare_notice, sizeof(prepare_notice) - 1u));
+        assert(!denzic_device_control_v1_is_ec11_recovery_prepare_notice(notice, sizeof(notice) - 1u));
+        assert(!denzic_device_control_v1_is_ec11_recovery_notice(notice, sizeof(notice) - 2u));
+    }
     return 0;
 }

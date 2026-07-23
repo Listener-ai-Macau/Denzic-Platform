@@ -381,6 +381,45 @@ impl DeviceControlCore {
     }
 }
 
+/// Formats the device settings revision characteristic value
+/// (`schema=<schema>;<field>=<revision>`) exposed as a read-only Property.
+pub fn format_settings_revision_value(revision: u32) -> String {
+    format!("schema={SETTINGS_REVISION_VALUE_SCHEMA};{SETTINGS_REVISION_VALUE_FIELD}={revision}")
+}
+
+/// Parses the device settings revision characteristic value. The revision is a
+/// non-zero u32; unknown `;`-separated fields are ignored for forward
+/// compatibility.
+pub fn parse_settings_revision_value(value: &str) -> Result<u32, String> {
+    let field_prefix = format!("{SETTINGS_REVISION_VALUE_FIELD}=");
+    let revision = value
+        .split(';')
+        .map(str::trim)
+        .find_map(|field| field.strip_prefix(field_prefix.as_str()))
+        .ok_or_else(|| {
+            format!("device settings revision characteristic missing {SETTINGS_REVISION_VALUE_FIELD}: {value}")
+        })?;
+    let revision = revision
+        .parse::<u32>()
+        .map_err(|err| format!("device settings revision is not u32: {err}"))?;
+    if revision == 0 {
+        return Err("device settings revision must be nonzero".to_string());
+    }
+    Ok(revision)
+}
+
+/// Returns true when a notification payload is the EC11 hardware recovery
+/// notice token.
+pub fn is_ec11_recovery_notice(notification: &[u8]) -> bool {
+    notification == EC11_RECOVERY_NOTICE
+}
+
+/// Returns true when a notification payload is the EC11 hardware recovery
+/// pre-authorization (prepare) notice token.
+pub fn is_ec11_recovery_prepare_notice(notification: &[u8]) -> bool {
+    notification == EC11_RECOVERY_PREPARE_NOTICE
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -477,5 +516,41 @@ mod tests {
         assert_eq!(replay.result, OperationResult::TimedOut);
         assert_eq!(replay.error, ErrorCategory::Timeout);
         assert!(replay.replayed);
+    }
+
+    #[test]
+    fn settings_revision_value_round_trips() {
+        let value = format_settings_revision_value(42);
+        assert_eq!(
+            value,
+            "schema=listener.device_settings.v1;settings_revision=42"
+        );
+        assert_eq!(parse_settings_revision_value(&value), Ok(42));
+        assert_eq!(
+            parse_settings_revision_value("other=1; settings_revision=7"),
+            Ok(7)
+        );
+        assert!(parse_settings_revision_value("settings_revision=0").is_err());
+        assert!(parse_settings_revision_value("settings_revision=abc").is_err());
+        assert!(parse_settings_revision_value("schema=listener.device_settings.v1").is_err());
+    }
+
+    #[test]
+    fn ec11_recovery_tokens_match_wire_layout() {
+        assert!(is_ec11_recovery_notice(b"listener-ec11-recovery-v1"));
+        assert!(is_ec11_recovery_prepare_notice(
+            b"listener-ec11-recovery-prepare-v1"
+        ));
+        assert!(!is_ec11_recovery_notice(
+            b"listener-ec11-recovery-prepare-v1"
+        ));
+        assert!(!is_ec11_recovery_prepare_notice(
+            b"listener-ec11-recovery-v1"
+        ));
+        assert_eq!(EC11_RECOVERY_ACK_WRITE, b"TYPE:EC11:RECOVERY:ACK\n");
+        assert_eq!(
+            EC11_RECOVERY_PREPARE_ACK_WRITE,
+            b"TYPE:EC11:RECOVERY:PREPARE:ACK\n"
+        );
     }
 }

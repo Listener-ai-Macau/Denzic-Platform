@@ -112,6 +112,25 @@ bool denzic_device_control_v1_confirm_setting_readback(
     uint64_t idempotency_key,
     uint32_t observed_revision);
 
+/*
+ * Formats the settings revision characteristic value
+ * ("schema=<schema>;<field>=<revision>") into out. Returns false when the
+ * buffer is too small or revision is zero; out is always NUL-terminated when
+ * out_size is non-zero.
+ */
+bool denzic_device_control_v1_format_settings_revision(
+    char *out,
+    size_t out_size,
+    uint32_t revision);
+
+/* Matches a notification payload against the EC11 recovery notice tokens. */
+bool denzic_device_control_v1_is_ec11_recovery_notice(
+    const uint8_t *data,
+    size_t len);
+bool denzic_device_control_v1_is_ec11_recovery_prepare_notice(
+    const uint8_t *data,
+    size_t len);
+
 #ifdef __cplusplus
 }
 #endif

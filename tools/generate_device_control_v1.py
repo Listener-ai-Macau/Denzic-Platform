@@ -4,6 +4,7 @@
 import argparse
 import json
 import re
+import uuid
 from pathlib import Path
 
 
@@ -65,6 +66,39 @@ def validate_spec(spec):
     if "accepted" not in {item["name"] for item in spec["operation_results"]}:
         raise SystemExit("operation_results must include accepted")
 
+    settings = spec.get("settings_revision")
+    if not isinstance(settings, dict):
+        raise SystemExit("settings_revision must be an object")
+    try:
+        uuid.UUID(settings.get("characteristic_uuid", ""))
+    except (ValueError, AttributeError, TypeError) as error:
+        raise SystemExit(
+            f"settings_revision.characteristic_uuid must be a canonical UUID: {error}"
+        ) from error
+    for key in ("value_schema", "value_field"):
+        value = settings.get(key)
+        if not isinstance(value, str) or not re.fullmatch(r"[a-z][a-z0-9_.]*", value):
+            raise SystemExit(f"settings_revision.{key} has invalid value: {value!r}")
+
+    ec11 = spec.get("ec11_recovery")
+    if not isinstance(ec11, dict):
+        raise SystemExit("ec11_recovery must be an object")
+    for key in EC11_MESSAGES:
+        value = ec11.get(key)
+        if not isinstance(value, str) or not value:
+            raise SystemExit(f"ec11_recovery.{key} must be a non-empty string")
+        if not re.fullmatch(r"[ -~]+", value) or "\\" in value or '"' in value:
+            raise SystemExit(
+                f"ec11_recovery.{key} must be printable ASCII without quotes: {value!r}"
+            )
+
+
+EC11_MESSAGES = ("notice", "prepare_notice", "ack", "prepare_ack")
+
+
+def c_uuid_bytes(value):
+    return ", ".join(f"0x{byte:02x}" for byte in reversed(uuid.UUID(value).bytes))
+
 
 def render_rust_enum(items, rust_type):
     lines = [
@@ -91,7 +125,31 @@ def render_rust(spec):
     for key, rust_type, _ in ENUMS:
         lines.extend(render_rust_enum(spec[key], rust_type))
         lines.append("")
+    lines.extend(render_rust_wire_constants(spec))
     return "\n".join(lines)
+
+
+def render_rust_wire_constants(spec):
+    settings = spec["settings_revision"]
+    settings_uuid = uuid.UUID(settings["characteristic_uuid"])
+    lines = [
+        f'pub const SETTINGS_REVISION_CHARACTERISTIC_UUID: &str = "{settings_uuid}";',
+        f"pub const SETTINGS_REVISION_CHARACTERISTIC_UUID_U128: u128 = 0x{settings_uuid.int:032x};",
+        f'pub const SETTINGS_REVISION_VALUE_SCHEMA: &str = "{settings["value_schema"]}";',
+        f'pub const SETTINGS_REVISION_VALUE_FIELD: &str = "{settings["value_field"]}";',
+        "",
+        "// EC11 recovery handshake tokens. Notices are notified by the device;",
+        "// acknowledgements are written by the host with a trailing line feed,",
+        "// which the device strips before matching the token.",
+    ]
+    for key in EC11_MESSAGES:
+        symbol = f"EC11_RECOVERY_{c_symbol(key)}"
+        token = spec["ec11_recovery"][key]
+        lines.append(f'pub const {symbol}: &[u8] = b"{token}";')
+        if key.endswith("ack"):
+            lines.append(f'pub const {symbol}_WRITE: &[u8] = b"{token}\\n";')
+    lines.append("")
+    return lines
 
 
 def render_c_enum(items, c_type, c_prefix):
@@ -123,8 +181,26 @@ def render_c(spec):
     for key, _, c_type in ENUMS:
         lines.extend(render_c_enum(spec[key], c_type, c_symbol(c_type)))
         lines.append("")
+    lines.extend(render_c_wire_constants(spec))
     lines.extend(["#ifdef __cplusplus", "}", "#endif", "", "#endif", ""])
     return "\n".join(lines)
+
+
+def render_c_wire_constants(spec):
+    settings = spec["settings_revision"]
+    lines = [
+        f'#define DENZIC_DEVICE_CONTROL_V1_SETTINGS_REVISION_UUID_TEXT "{settings["characteristic_uuid"]}"',
+        f"#define DENZIC_DEVICE_CONTROL_V1_SETTINGS_REVISION_UUID_BYTES {c_uuid_bytes(settings['characteristic_uuid'])}",
+        f'#define DENZIC_DEVICE_CONTROL_V1_SETTINGS_REVISION_VALUE_SCHEMA "{settings["value_schema"]}"',
+        f'#define DENZIC_DEVICE_CONTROL_V1_SETTINGS_REVISION_VALUE_FIELD "{settings["value_field"]}"',
+        "",
+        "/* EC11 recovery handshake tokens; host acknowledgements are line-feed terminated. */",
+    ]
+    for key in EC11_MESSAGES:
+        symbol = f"DENZIC_DEVICE_CONTROL_V1_EC11_RECOVERY_{c_symbol(key)}"
+        lines.append(f'#define {symbol} "{spec["ec11_recovery"][key]}"')
+    lines.append("")
+    return lines
 
 
 def write_or_check(path, expected, check):
