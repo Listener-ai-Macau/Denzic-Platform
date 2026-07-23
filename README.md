@@ -8,14 +8,33 @@ invalid unless its `protocol`, `host`, and `embedded` layers all exist.
 
 Current modules:
 
-- `ota/host/`: desktop-side package and transfer core.
-- `ota/embedded/`: device-side protocol and storage state machine.
+- `ota/host/`: desktop-side package and transfer core, plus the OTA package
+  manifest (schema_version 2) parser/validator driven by
+  `ota/protocol/ota_manifest_v2.json`.
+- `ota/embedded/`: device-side protocol and storage state machine, plus the
+  product-independent orchestration decision core
+  (`embedded/c/src/denzic_ota_orchestration_v1.c`) for blocker gating, battery
+  threshold, image-size admission, inactivity timeout, and pending-verify
+  confirm/rollback decisions.
 - `ota/protocol/`: the single wire contract used by both sides.
-- `audio/host/` and `audio/embedded/`: shared VKA1 recording packet, session, and lossless Rice codec core.
+- `audio/host/` and `audio/embedded/`: shared VKA1 recording packet, session, and lossless Rice codec core,
+  plus the product-independent BLE audio stream transport engine
+  (`embedded/c/src/denzic_audio_transport_v1.c`, mirrored in `host/rust/src/transport_v1.rs`)
+  driven by `audio/protocol/audio_transport_v1.json`: media-clock pacing debt,
+  true-capacity backpressure hysteresis, the 48-packet replay window, and
+  connection-epoch stale-event classification per `audio/protocol/flow_control_v1.md`.
 - `observability/`: versioned BLE lifecycle and cross-capability event envelope for firmware and host adapters,
   plus the portable sector-based diagnostic log flash store (`embedded/c/src/denzic_diag_log_store.c`)
-  whose storage, time, locking, and output hooks are injected by product adapters.
+  whose storage, time, locking, and output hooks are injected by product adapters,
+  and the BLE diagnostic log GATT pull contract with its OS-free chunk codec
+  (`embedded/c/src/denzic_diag_log_gatt_v1.c`).
 - `device_control/`: transport-neutral discovery, lifecycle, ownership, capability, setting-readback, and command-transaction core. BLE, USB, Wi-Fi, and serial remain product adapters.
+- `ble_pairing/`: pairing/recovery policy decision core plus the connection-lifecycle
+  orchestration layer (`embedded/c/src/denzic_ble_pairing_v1_orchestration.c`, mirrored in
+  `host/rust/src/orchestration.rs`): advertising restart routing, payload profile planning,
+  disconnect duplicate filtering, bond-delete recovery sequencing, and reattach evidence
+  classification, driven by `ble_pairing/protocol/ble_pairing_v1.json`. Timers, BLE-stack
+  calls, LED output, and storage stay in product adapters.
 
 The portable C recording core under `audio/embedded/c` owns recording state,
 session transitions, PCM batch accounting, and format metadata. Product

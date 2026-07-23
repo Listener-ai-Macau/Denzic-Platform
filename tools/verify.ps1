@@ -31,8 +31,14 @@ try {
     python .\tools\generate_ota_v1.py --check
     if ($LASTEXITCODE -ne 0) { throw "OTA generated-source check failed." }
 
+    python .\tools\generate_ota_manifest_v2.py --check
+    if ($LASTEXITCODE -ne 0) { throw "OTA manifest generated-source check failed." }
+
     python .\tools\generate_audio_v1.py --check
     if ($LASTEXITCODE -ne 0) { throw "Audio generated-source check failed." }
+
+    python .\tools\generate_audio_transport_v1.py --check
+    if ($LASTEXITCODE -ne 0) { throw "Audio transport generated-source check failed." }
 
     python .\tools\generate_ble_windows_v1.py --check
     if ($LASTEXITCODE -ne 0) { throw "BLE Windows generated-source check failed." }
