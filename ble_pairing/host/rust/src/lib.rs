@@ -8,8 +8,10 @@
 //! `ble_pairing/protocol/ble_pairing_v1.md`.
 
 mod generated;
+mod orchestration;
 
 pub use generated::*;
+pub use orchestration::*;
 
 /// Disconnect classification (protocol section 1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

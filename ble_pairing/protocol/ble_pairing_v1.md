@@ -21,6 +21,7 @@ Protocol constants referenced below live in `ble_pairing_v1.json`:
 | `hci.nimble_hci_status_base` | 512 | Base added to an HCI error to form the host-stack status code (0x200). |
 | `hci.remote_user_terminated_reason` | 19 | HCI "Remote User Terminated Connection" (0x13). |
 | `hci.host_deliberate_disconnect_status` | 531 | 512 + 19: status observed when the host deleted the pairing. |
+| `disconnect_duplicate_filter_ms` | 750 | Window in which a repeated disconnect event for the same connection is a stack echo. |
 
 ## 1. Disconnect classification
 
@@ -119,3 +120,73 @@ an open pairing window yields `retry_within_window` — keep pairing
 advertising available for the host's retry and terminate the insecure link
 without restarting repair. Outside a window it yields `open_repair_window` —
 open a full pairing reset and terminate the insecure connection.
+
+## 8. Connection-lifecycle orchestration
+
+The orchestration layer (`denzic_ble_pairing_v1_orchestration.c`, mirrored by
+`orchestration.rs` in the host crate) sequences what the policy tables decide.
+Every function remains pure: the caller samples each input at the point its
+own event path requires and executes every side effect itself.
+
+### 8.1 Advertising restart routing
+
+After a disconnect, restart routing is a fixed priority:
+
+| shutdown quiesce? | key-wake-only? | bond delete active? | Decision |
+| --- | --- | --- | --- |
+| yes | — | — | `suppress_shutdown` |
+| no | yes | — | `suppress_key_wake` |
+| no | no | yes | `defer_bond_delete` (the worker owns the single recovery advertising start) |
+| no | no | no | `restart` |
+
+The caller samples `shutdown_quiesce` before running its keep-connectable
+recovery hook and the other inputs after it, so the hook's flag clearing is
+honoured exactly once. After an advertising-complete event the same suppress
+priority applies, but a bond delete never defers: the completion event
+belongs to the worker-owned advertising cycle.
+
+### 8.2 Disconnect duplicate filter
+
+A repeated disconnect event for the same connection handle and reason inside
+`disconnect_duplicate_filter_ms` is a stack echo:
+`elapsed >= 0 AND elapsed < filter_ms`. A clock moving backwards is never a
+duplicate. Handle/reason comparison stays in the caller.
+
+### 8.3 Advertising payload profile plan
+
+1. A Type-controlled recovery payload is built first, but only when no Swift
+   Pair prompt competes: `try_type_recovery = type_recovery_requested AND NOT
+   swift_pair_requested`.
+2. Swift Pair is tried next: `try_swift_pair = NOT type_recovery_enabled AND
+   swift_pair_requested`.
+3. Final selection: `swift_pair` when its payload built, else `type_recovery`
+   when its payload built, else `normal`. Payload construction stays in the
+   adapter and may fail.
+
+### 8.4 Local IRK reset trigger
+
+`irk_reset_after_disconnect = pairing_window_open AND identity_rotate_pending
+AND bond_lookup_ok AND bonded_peer_count == 0`. A failed bond lookup must
+never reset the IRK on an unknown bond state.
+
+### 8.5 Bond-delete recovery sequencing
+
+- Warm-up advertising before cleanup and direct single-peer delete both apply
+  only for a Type-controlled recovery with a known current peer; anything
+  else falls back to enumerating bonded peers.
+- During enumeration a native recovery removes peers through the GAP unpair
+  API (so the local IRK rotates with the final bond); a Type-controlled
+  recovery deletes peer records and keeps the local identity for re-pairing.
+- Cleanup succeeded when a direct delete ran, or the enumeration lookup and
+  every per-peer delete returned 0.
+- After the recovery advertising start the pairing window guard is
+  re-activated only when it lapsed while the window is still open:
+  `NOT power_blocker_active AND pairing_window_active`.
+
+### 8.6 Passive reattach evidence
+
+`reattach_evidence_ready = (paired_devices_visible AND native_hid_present) OR
+fresh_native_hid_after_baseline`. An existing host pairing only counts as
+evidence with a live native HID endpoint; a fresh HID address after the
+monitoring baseline is evidence on its own. Address-set diffing stays in the
+adapter.

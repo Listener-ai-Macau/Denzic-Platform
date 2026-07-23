@@ -16,6 +16,8 @@ ENUM_GROUPS = (
     ("window_close_decisions", "WINDOW_CLOSE"),
     ("security_failure_actions", "SECURITY_FAILURE"),
     ("swift_pair_prompt_evaluations", "SWIFT_PAIR_PROMPT"),
+    ("advertising_profiles", "ADV_PROFILE"),
+    ("advertising_restart_decisions", "ADV_RESTART"),
 )
 
 

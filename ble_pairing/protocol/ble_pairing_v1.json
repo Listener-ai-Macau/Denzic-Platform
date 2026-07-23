@@ -8,7 +8,8 @@
     "first_pairing_window_ms": 0,
     "swift_pair_adv_min_restart_ms": 1000,
     "recovery_bond_delete_wait_ms": 2000,
-    "recovery_advertising_command_target_ms": 250
+    "recovery_advertising_command_target_ms": 250,
+    "disconnect_duplicate_filter_ms": 750
   },
   "hci": {
     "nimble_hci_status_base": 512,
@@ -44,5 +45,16 @@
     { "name": "consumed", "code": 3 },
     { "name": "disabled", "code": 4 },
     { "name": "expired", "code": 5 }
+  ],
+  "advertising_profiles": [
+    { "name": "normal", "code": 1 },
+    { "name": "swift_pair", "code": 2 },
+    { "name": "type_recovery", "code": 3 }
+  ],
+  "advertising_restart_decisions": [
+    { "name": "restart", "code": 1 },
+    { "name": "suppress_shutdown", "code": 2 },
+    { "name": "suppress_key_wake", "code": 3 },
+    { "name": "defer_bond_delete", "code": 4 }
   ]
 }
