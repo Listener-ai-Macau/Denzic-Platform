@@ -13,10 +13,10 @@ Protocol constants referenced below:
 | PCM byte rate | 32,000 B/s (16,000 Hz × 1 ch × 16 bit) | `pcm` in `audio_v1.json` |
 | `session_errors.queue_full` | 1 | `session_errors` in `audio_v1.json` |
 | Lossless Rice packet flag | 0x01 | `lossless_rice.packet_flag` in `audio_v1.json` |
-| Wire pacing target | 38,400 B/s | this contract |
-| Pacing tick | 10 ms (384 B/tick) | this contract |
-| Replay retained window | 48 audio packets | this contract |
-| Fixed session duration | exactly 60 s = 1,920,000 PCM bytes | this contract |
+| Wire pacing target | 38,400 B/s | `pacing` in `audio_transport_v1.json` |
+| Pacing tick | 10 ms (384 B/tick) | `pacing` in `audio_transport_v1.json` |
+| Replay retained window | 48 audio packets | `replay` in `audio_transport_v1.json` |
+| Fixed session duration | exactly 60 s = 1,920,000 PCM bytes | `fixed_session` in `audio_transport_v1.json` |
 
 ## 1. Media clock and steady consumption
 

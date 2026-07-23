@@ -1,6 +1,7 @@
 add_library(denzic_audio_embedded STATIC
     src/denzic_audio_lossless_v1.c
     src/denzic_audio_recording_v1.c
+    src/denzic_audio_transport_v1.c
 )
 target_include_directories(denzic_audio_embedded PUBLIC include)
 target_compile_features(denzic_audio_embedded PUBLIC c_std_99)
@@ -22,3 +23,9 @@ add_executable(denzic_audio_lossless_v1_test
 )
 target_link_libraries(denzic_audio_lossless_v1_test PRIVATE denzic_audio_embedded)
 add_test(NAME denzic_audio_lossless_v1_test COMMAND denzic_audio_lossless_v1_test)
+
+add_executable(denzic_audio_transport_v1_test
+    tests/test_denzic_audio_transport_v1.c
+)
+target_link_libraries(denzic_audio_transport_v1_test PRIVATE denzic_audio_embedded)
+add_test(NAME denzic_audio_transport_v1_test COMMAND denzic_audio_transport_v1_test)

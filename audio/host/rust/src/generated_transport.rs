@@ -1,0 +1,22 @@
+// Generated from audio/protocol/audio_transport_v1.json. Do not edit.
+pub const TRANSPORT_PROTOCOL_NAME: &str = "denzic_audio_transport_v1";
+pub const TRANSPORT_PROTOCOL_VERSION: u8 = 1;
+pub const TRANSPORT_PCM_BYTES_PER_SECOND: u32 = 32000;
+pub const PACING_TARGET_BYTES_PER_SECOND: u32 = 38400;
+pub const PACING_TICK_MS: u32 = 10;
+pub const PACING_BYTES_PER_TICK: u32 = 384;
+pub const FIXED_SESSION_DURATION_SECONDS: u32 = 60;
+pub const FIXED_SESSION_PCM_BYTES: u32 = 1920000;
+pub const REPLAY_WINDOW_PACKETS: usize = 48;
+pub const REPLAY_PAYLOAD_BYTES: usize = 480;
+pub const NOTIFY_QUEUE_LENGTH_DEFAULT: u32 = 48;
+pub const NOTIFY_QUEUE_LENGTH_SPIRAM: u32 = 256;
+pub const AUDIO_POOL_EXTRA_DEFAULT: u32 = 4;
+pub const AUDIO_POOL_EXTRA_SPIRAM: u32 = 8;
+pub const AUDIO_POOL_BUFFER_BYTES: u32 = 1920;
+pub const BACKPRESSURE_PAUSE_PERCENT: u32 = 95;
+pub const BACKPRESSURE_RESUME_PERCENT: u32 = 70;
+pub const AUDIO_POOL_WARN_PERCENT: u32 = 80;
+pub const PACKET_DEFAULT_VALUE_MAX_BYTES: u16 = 244;
+pub const PACKET_MAX_VALUE_BYTES: u16 = 500;
+pub const PACKET_MTU_ATT_OVERHEAD_BYTES: u16 = 3;

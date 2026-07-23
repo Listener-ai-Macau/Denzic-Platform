@@ -1,0 +1,39 @@
+{
+  "name": "denzic_audio_transport_v1",
+  "version": 1,
+  "base_contract": "denzic_audio_v1",
+  "semantics": "audio/protocol/flow_control_v1.md",
+  "media_clock": {
+    "pcm_bytes_per_second": 32000
+  },
+  "pacing": {
+    "target_bytes_per_second": 38400,
+    "tick_ms": 10,
+    "bytes_per_tick": 384
+  },
+  "fixed_session": {
+    "duration_seconds": 60,
+    "pcm_bytes": 1920000
+  },
+  "replay": {
+    "window_packets": 48,
+    "payload_bytes": 480
+  },
+  "capacity": {
+    "notify_queue_length_default": 48,
+    "notify_queue_length_spiram": 256,
+    "audio_pool_extra_default": 4,
+    "audio_pool_extra_spiram": 8,
+    "audio_pool_buffer_bytes": 1920
+  },
+  "backpressure": {
+    "pause_percent": 95,
+    "resume_percent": 70,
+    "pool_warn_percent": 80
+  },
+  "packet": {
+    "default_value_max_bytes": 244,
+    "max_value_bytes": 500,
+    "mtu_att_overhead_bytes": 3
+  }
+}

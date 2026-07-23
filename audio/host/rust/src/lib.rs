@@ -12,8 +12,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 mod generated;
+mod generated_transport;
 
 pub mod lossless_v1;
+pub mod transport_v1;
 
 pub use generated::{
     HEADER_LEN, MAGIC, MAGIC_U32, PCM_BYTES_PER_SECOND, PCM_CHANNELS, PCM_SAMPLE_RATE_HZ,
