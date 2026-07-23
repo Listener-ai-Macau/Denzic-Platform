@@ -1,0 +1,65 @@
+{
+  "name": "denzic_ota_manifest_v2",
+  "comment": "OTA package manifest schema. schema_version 1 is retired; 2 is the only supported value.",
+  "schema_version": 2,
+  "manifest_file_name": "ota_manifest.json",
+  "package_file_name": "firmware_ota.bin",
+  "firmware_version_max_chars": 31,
+  "sha256_hex_chars": 64,
+  "default_gatt_chunk_bytes": 500,
+  "channels": ["stable", "development"],
+  "rollback_methods": ["esp_idf_bootloader_rollback"],
+  "required_sections": [
+    "schema_version",
+    "created_at_utc",
+    "channel",
+    "firmware",
+    "requirements",
+    "protocol",
+    "ble_identity",
+    "rollback",
+    "recovery"
+  ],
+  "required_fields": {
+    "firmware": {
+      "string": ["project", "version", "git_commit", "target", "file", "sha256"],
+      "bool": ["git_dirty"],
+      "positive_integer": ["size_bytes"]
+    },
+    "requirements": {
+      "string": ["hardware_revision", "min_desktop_version"],
+      "positive_integer": ["protocol_version"]
+    },
+    "protocol": {
+      "string": ["name", "firmware_capability"],
+      "positive_integer": ["version"]
+    },
+    "ble_identity": {
+      "string": [
+        "name",
+        "appearance",
+        "hid_service_uuid",
+        "audio_service_uuid",
+        "audio_notify_uuid",
+        "readiness_uuid",
+        "capabilities_uuid"
+      ]
+    },
+    "ble_identity.dis": {
+      "string": [
+        "manufacturer",
+        "model",
+        "hardware_revision",
+        "firmware_revision",
+        "software_revision_protocol"
+      ]
+    },
+    "rollback": {
+      "string": ["method", "instructions"],
+      "bool": ["supported"]
+    },
+    "recovery": {
+      "string": ["factory_reflash", "serial_commands"]
+    }
+  }
+}

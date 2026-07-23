@@ -1,6 +1,11 @@
 mod generated;
+mod generated_manifest;
+
+pub mod manifest;
+pub mod orchestration;
 
 pub use generated::*;
+pub use generated_manifest::*;
 
 use std::fmt;
 use std::time::{Duration, Instant};
