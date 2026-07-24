@@ -66,5 +66,26 @@ int main(void)
     CHECK(decision.action == DENZIC_VOICE_ACTIVATION_V1_ACTION_STOP);
     CHECK(decision.stop_reason ==
           DENZIC_VOICE_ACTIVATION_V1_STOP_REASON_MAX_DURATION);
+
+    CHECK(denzic_voice_activation_v1_decide_gate(
+              DENZIC_VOICE_ACTIVATION_V1_PHRASE_SIGNAL_KEYWORD_MODEL,
+              true,
+              true,
+              false) == DENZIC_VOICE_ACTIVATION_V1_GATE_DECISION_ACCEPT);
+    CHECK(denzic_voice_activation_v1_decide_gate(
+              DENZIC_VOICE_ACTIVATION_V1_PHRASE_SIGNAL_LOCAL_TRANSCRIPT,
+              true,
+              false,
+              false) == DENZIC_VOICE_ACTIVATION_V1_GATE_DECISION_REJECT);
+    CHECK(denzic_voice_activation_v1_decide_gate(
+              DENZIC_VOICE_ACTIVATION_V1_PHRASE_SIGNAL_NONE,
+              false,
+              false,
+              false) == DENZIC_VOICE_ACTIVATION_V1_GATE_DECISION_PENDING);
+    CHECK(denzic_voice_activation_v1_decide_gate(
+              DENZIC_VOICE_ACTIVATION_V1_PHRASE_SIGNAL_NONE,
+              true,
+              true,
+              true) == DENZIC_VOICE_ACTIVATION_V1_GATE_DECISION_REJECT);
     return 0;
 }

@@ -140,3 +140,23 @@ denzic_voice_activation_v1_decision_t denzic_voice_activation_v1_step(
     decision.state = machine->state;
     return decision;
 }
+
+denzic_voice_activation_v1_gate_decision_t denzic_voice_activation_v1_decide_gate(
+    denzic_voice_activation_v1_phrase_signal_t phrase_signal,
+    bool owner_match_known,
+    bool owner_match,
+    bool terminal) {
+    if (phrase_signal != DENZIC_VOICE_ACTIVATION_V1_PHRASE_SIGNAL_NONE) {
+        if (owner_match_known) {
+            return owner_match
+                ? DENZIC_VOICE_ACTIVATION_V1_GATE_DECISION_ACCEPT
+                : DENZIC_VOICE_ACTIVATION_V1_GATE_DECISION_REJECT;
+        }
+        return terminal
+            ? DENZIC_VOICE_ACTIVATION_V1_GATE_DECISION_REJECT
+            : DENZIC_VOICE_ACTIVATION_V1_GATE_DECISION_PENDING;
+    }
+    return terminal
+        ? DENZIC_VOICE_ACTIVATION_V1_GATE_DECISION_REJECT
+        : DENZIC_VOICE_ACTIVATION_V1_GATE_DECISION_PENDING;
+}

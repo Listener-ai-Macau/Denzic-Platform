@@ -52,6 +52,12 @@ denzic_voice_activation_v1_decision_t denzic_voice_activation_v1_step(
     const denzic_voice_activation_v1_config_t *config,
     const denzic_voice_activation_v1_input_t *input);
 
+denzic_voice_activation_v1_gate_decision_t denzic_voice_activation_v1_decide_gate(
+    denzic_voice_activation_v1_phrase_signal_t phrase_signal,
+    bool owner_match_known,
+    bool owner_match,
+    bool terminal);
+
 #ifdef __cplusplus
 }
 #endif

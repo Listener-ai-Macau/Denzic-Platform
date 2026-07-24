@@ -49,6 +49,29 @@ pub struct Decision {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GateInput {
+    pub phrase_signal: PhraseSignal,
+    pub owner_match: Option<bool>,
+    pub terminal: bool,
+}
+
+pub fn decide_gate(input: GateInput) -> GateDecision {
+    if input.phrase_signal != PhraseSignal::None {
+        return match input.owner_match {
+            Some(true) => GateDecision::Accept,
+            Some(false) => GateDecision::Reject,
+            None if input.terminal => GateDecision::Reject,
+            None => GateDecision::Pending,
+        };
+    }
+    if input.terminal {
+        GateDecision::Reject
+    } else {
+        GateDecision::Pending
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Machine {
     state: State,
     speech_ms: u32,
@@ -279,6 +302,56 @@ mod tests {
         assert_eq!(
             machine.step(Config::default(), active).state,
             State::SpeechConfirming
+        );
+    }
+
+    #[test]
+    fn wake_gate_accepts_either_local_phrase_signal_only_with_owner_match() {
+        for phrase_signal in [PhraseSignal::KeywordModel, PhraseSignal::LocalTranscript] {
+            assert_eq!(
+                decide_gate(GateInput {
+                    phrase_signal,
+                    owner_match: Some(true),
+                    terminal: false,
+                }),
+                GateDecision::Accept
+            );
+            assert_eq!(
+                decide_gate(GateInput {
+                    phrase_signal,
+                    owner_match: Some(false),
+                    terminal: false,
+                }),
+                GateDecision::Reject
+            );
+        }
+    }
+
+    #[test]
+    fn wake_gate_stays_pending_until_a_signal_or_terminal_boundary() {
+        assert_eq!(
+            decide_gate(GateInput {
+                phrase_signal: PhraseSignal::None,
+                owner_match: None,
+                terminal: false,
+            }),
+            GateDecision::Pending
+        );
+        assert_eq!(
+            decide_gate(GateInput {
+                phrase_signal: PhraseSignal::None,
+                owner_match: Some(true),
+                terminal: true,
+            }),
+            GateDecision::Reject
+        );
+        assert_eq!(
+            decide_gate(GateInput {
+                phrase_signal: PhraseSignal::LocalTranscript,
+                owner_match: None,
+                terminal: true,
+            }),
+            GateDecision::Reject
         );
     }
 }

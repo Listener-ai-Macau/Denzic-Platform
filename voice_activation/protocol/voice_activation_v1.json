@@ -19,6 +19,16 @@
       { "name": "none", "code": 0 },
       { "name": "silence", "code": 1 },
       { "name": "max_duration", "code": 2 }
+    ],
+    "phrase_signal": [
+      { "name": "none", "code": 0 },
+      { "name": "keyword_model", "code": 1 },
+      { "name": "local_transcript", "code": 2 }
+    ],
+    "gate_decision": [
+      { "name": "pending", "code": 0 },
+      { "name": "accept", "code": 1 },
+      { "name": "reject", "code": 2 }
     ]
   },
   "constants": {
@@ -28,6 +38,7 @@
     "default_tail_ms": 250,
     "default_min_session_ms": 500,
     "default_max_session_ms": 60000,
-    "default_cooldown_ms": 1500
+    "default_cooldown_ms": 1500,
+    "default_local_confirmation_start_ms": 1800
   }
 }
