@@ -190,3 +190,48 @@ fresh_native_hid_after_baseline`. An existing host pairing only counts as
 evidence with a live native HID endpoint; a fresh HID address after the
 monitoring baseline is evidence on its own. Address-set diffing stays in the
 adapter.
+
+## 9. Host GATT cache policy
+
+The host-side cache policy table (`gatt_cache.rs` in the host crate) decides
+when a host (central) may serve GATT service/characteristic access from the
+system cache and when it must force fresh discovery from the peer. A
+peripheral stack has no GATT client cache concept, so this layer exists only
+in the host mirror; the C end carries just the generated policy codes.
+
+### 9.1 Cache policies
+
+| Policy | Code | Attempt sequence |
+| --- | --- | --- |
+| `cached_only` | 1 | cached |
+| `uncached_only` | 2 | uncached |
+| `uncached_first` | 3 | uncached, then cached as fallback |
+| `cached_first` | 4 | cached, then uncached as fallback |
+
+The adapter maps each mode onto its OS cache-mode API and runs the attempts
+in the listed order; it never reorders or extends a sequence.
+
+### 9.2 Scenario table
+
+| Scenario constant | Policy |
+| --- | --- |
+| `RECENT_PAIRING_NOTIFY_CACHE_POLICY` | `cached_first` — a just-completed pairing may leave a valid system cache |
+| `KNOWN_ADDRESS_NOTIFY_CACHE_POLICY` | `uncached_first` — default notify discovery posture over known addresses |
+| `DEVICE_NOTIFY_CACHE_POLICY` | `uncached_first` — notify open by one exact address |
+| `PERSISTED_BOND_NOTIFY_CACHE_POLICY` | `cached_first` — a persisted OS-level bond can hold a valid cache while fresh queries temporarily fail (link rehydration) |
+| `POST_CONFIRM_NOTIFY_CACHE_POLICY` | `cached_first` — a confirmed image retains its GATT schema; uncached fallback covers Service Changed |
+| `SERVICE_REACHABILITY_PROBE_CACHE_POLICY` | `cached_first` — fast probe of an already-known service |
+| `STATUS_PROBE_CACHE_POLICY` | `cached_first` — bounded status-target open |
+| `CONTROL_WRITE_CACHE_POLICY` | `uncached_first` — control writes need fresh handles, cache only as fallback |
+| `DIAGNOSTIC_CACHE_POLICY` | `uncached_only` — diagnostics always read fresh |
+| `DEADLINE_SERVICE_ENDPOINT_CACHE_POLICY` | `cached_first` — the deadline-bounded endpoint open rehydrates the cache first to fit its budget |
+
+### 9.3 Parameterized decisions
+
+- `ota_device_control_cache_policy(verified_active_handoff)`: a verified
+  active handoff makes the device handle reusable but control writes still
+  require fresh characteristic handles, so it yields `uncached_only`;
+  otherwise `uncached_first`.
+- `ota_service_endpoint_cache_policy(allow_cached)`: `uncached_first` when
+  the caller proved the endpoint identity is current, `uncached_only`
+  otherwise.

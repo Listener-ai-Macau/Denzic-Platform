@@ -7,9 +7,11 @@
 //! calling product adapter. Normative semantics live in
 //! `ble_pairing/protocol/ble_pairing_v1.md`.
 
+mod gatt_cache;
 mod generated;
 mod orchestration;
 
+pub use gatt_cache::*;
 pub use generated::*;
 pub use orchestration::*;
 

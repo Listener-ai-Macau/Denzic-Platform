@@ -23,6 +23,10 @@ the platform and what product adapters must inject.
   passive reattach evidence classification.
 - `host/rust/src/lib.rs` and `host/rust/src/orchestration.rs` — the host
   mirror of both layers.
+- `host/rust/src/gatt_cache.rs` — the host-side GATT cache policy table
+  (protocol section 9): the cached/uncached attempt sequence per session
+  scenario. The table is host-only; the C end carries just the generated
+  policy codes.
 - Generated constants on both ends from `ble_pairing_v1.json`
   (`denzic_ble_pairing_v1_generated.h`, `generated.rs`).
 
@@ -47,8 +51,10 @@ allocates, logs, or touches an OS, timer, or BLE-stack API.
   NimBLE/NVS calls. The platform pins which branch each step takes; the
   adapter owns the sequence.
 - LED/power/diagnostics output and user-facing wording on both ends.
-- Host-side GATT session management, cache-mode policy, pairing prompt UI,
-  PnP/registry cleanup, and poll cadences.
+- Host-side GATT session management: mapping `GattCacheMode` onto the OS
+  cache-mode API, running the attempts a policy lists, session open/close,
+  retry cadences, pairing prompt UI, PnP/registry cleanup, and poll cadences.
+  The platform picks the policy per scenario; the adapter executes it.
 
 ## Wiring
 

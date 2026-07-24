@@ -18,6 +18,7 @@ ENUM_GROUPS = (
     ("swift_pair_prompt_evaluations", "SWIFT_PAIR_PROMPT"),
     ("advertising_profiles", "ADV_PROFILE"),
     ("advertising_restart_decisions", "ADV_RESTART"),
+    ("gatt_cache_policies", "GATT_CACHE"),
 )
 
 

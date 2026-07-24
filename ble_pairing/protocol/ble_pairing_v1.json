@@ -56,5 +56,11 @@
     { "name": "suppress_shutdown", "code": 2 },
     { "name": "suppress_key_wake", "code": 3 },
     { "name": "defer_bond_delete", "code": 4 }
+  ],
+  "gatt_cache_policies": [
+    { "name": "cached_only", "code": 1 },
+    { "name": "uncached_only", "code": 2 },
+    { "name": "uncached_first", "code": 3 },
+    { "name": "cached_first", "code": 4 }
   ]
 }

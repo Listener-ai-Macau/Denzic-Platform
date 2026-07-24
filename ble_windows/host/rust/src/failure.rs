@@ -146,6 +146,69 @@ pub fn classify_ble_failure_with_hints(
     }
 }
 
+/// Session-failure classification: is the error a link loss (fast retry)?
+///
+/// Pure keyword matching over transport error text (WinRT status text, host
+/// BLE helper messages, firmware disconnect reasons). What a link loss means
+/// for retry cadence or user guidance stays in the calling product adapter.
+pub fn is_ble_link_loss_error(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("connection status changed")
+        || lower.contains("gatt session status changed")
+        || (lower.contains("notification wait failed") && lower.contains("disconnected"))
+        || lower.contains("transport_not_ready")
+        || lower.contains("transport not ready")
+        || lower.contains("reason=546")
+        || lower.contains("reason: 546")
+        || lower.contains("reason 546")
+        || lower.contains("low-power idle")
+        || lower.contains("low power idle")
+        || lower.contains("idle disconnect")
+}
+
+/// Session-failure classification: is the error a transient reopen failure?
+///
+/// Matches the case-sensitive WinRT/Helper status formatting on purpose: the
+/// needles carry the exact debug rendering the Windows BLE helpers emit, so
+/// matching is done against the original text, not a lowercased copy.
+pub fn is_ble_transient_reopen_error(error: &str) -> bool {
+    error.contains("GattCommunicationStatus(1)")
+        || error.contains("GattCommunicationStatus(3)")
+        || error.contains("HRESULT(0x800706BA)")
+        || error.contains("BLE characteristic discovery returned status")
+        || error.contains("BLE service open wait failed")
+}
+
+/// Session-failure classification: should retries back off while the peer is
+/// offline (asleep, disconnected, or carrying a stale GATT/cache view)?
+pub fn is_ble_offline_backoff_error(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("gatt session did not become active")
+        || lower.contains("paired device disconnected")
+        || lower.contains("stale gatt/cache")
+        || lower.contains("device is asleep")
+        || lower.contains("device asleep")
+        || lower.contains("wake key")
+        || lower.contains("not found from service selector")
+}
+
+/// Session-failure classification: is the error a known-noisy CCCD failure?
+///
+/// A CCCD failure only counts as noise when the failure taxonomy also
+/// classifies it as a CCCD protocol error; `hints` must be the same product
+/// hints the caller uses for its own classification so both layers agree.
+pub fn is_ble_noisy_cccd_failure(error: &str, hints: &BleFailureHints) -> bool {
+    if classify_ble_failure_with_hints(error, hints).kind != BleFailureKind::CccdProtocolError {
+        return false;
+    }
+    let lower = error.to_ascii_lowercase();
+    lower.contains("hresult(0x800704c7)")
+        || lower.contains("cccd write timed out")
+        || lower.contains("gattcommunicationstatus(1)")
+        || lower.contains("protocol_error=3")
+        || lower.contains("protocol error=3")
+}
+
 /// Retryability and product-neutral user guidance per failure kind.
 pub fn failure_response(kind: BleFailureKind) -> (bool, bool, &'static str) {
     match kind {
@@ -406,6 +469,91 @@ mod tests {
         let long_error = "x".repeat(1000);
         let classification = classify_ble_failure(&long_error);
         assert_eq!(classification.evidence.chars().count(), 480);
+    }
+
+    #[test]
+    fn link_loss_covers_status_change_and_idle_disconnect_families() {
+        assert!(is_ble_link_loss_error(
+            "BLE device connection status changed to Disconnected; transport_not_ready"
+        ));
+        assert!(is_ble_link_loss_error("gatt session status changed"));
+        assert!(is_ble_link_loss_error(
+            "BLE embedded audio notification wait failed: disconnected"
+        ));
+        assert!(is_ble_link_loss_error(
+            "Windows BLE disconnected; reason=546; low-power idle"
+        ));
+        assert!(is_ble_link_loss_error("disconnect reason: 546"));
+        assert!(is_ble_link_loss_error("idle disconnect"));
+        assert!(!is_ble_link_loss_error(
+            "BLE embedded audio notification wait failed: channel closed unexpectedly"
+        ));
+        assert!(!is_ble_link_loss_error("element not found"));
+    }
+
+    #[test]
+    fn transient_reopen_matches_case_sensitive_status_rendering() {
+        assert!(is_ble_transient_reopen_error(
+            "open failed: GattCommunicationStatus(1)"
+        ));
+        assert!(is_ble_transient_reopen_error("GattCommunicationStatus(3)"));
+        assert!(is_ble_transient_reopen_error("HRESULT(0x800706BA)"));
+        assert!(is_ble_transient_reopen_error(
+            "BLE characteristic discovery returned status 3"
+        ));
+        assert!(is_ble_transient_reopen_error(
+            "BLE service open wait failed"
+        ));
+        // The needles are the exact WinRT debug rendering; lowercase text is
+        // not a transient reopen signature.
+        assert!(!is_ble_transient_reopen_error("gattcommunicationstatus(1)"));
+        assert!(!is_ble_transient_reopen_error("hresult(0x800706ba)"));
+    }
+
+    #[test]
+    fn offline_backoff_covers_asleep_disconnected_and_stale_cache() {
+        assert!(is_ble_offline_backoff_error(
+            "BLE GATT session did not become active after 8000 ms"
+        ));
+        assert!(is_ble_offline_backoff_error("paired device disconnected"));
+        assert!(is_ble_offline_backoff_error("stale GATT/cache view"));
+        assert!(is_ble_offline_backoff_error("device is asleep"));
+        assert!(is_ble_offline_backoff_error("press the wake key"));
+        assert!(is_ble_offline_backoff_error(
+            "service not found from service selector"
+        ));
+        assert!(!is_ble_offline_backoff_error("GattCommunicationStatus(1)"));
+    }
+
+    #[test]
+    fn noisy_cccd_requires_cccd_kind_plus_noise_signature() {
+        let hints = BleFailureHints::NONE;
+        assert!(is_ble_noisy_cccd_failure(
+            "CCCD write failed: HRESULT(0x800704C7)",
+            &hints
+        ));
+        assert!(is_ble_noisy_cccd_failure("cccd write timed out", &hints));
+        assert!(is_ble_noisy_cccd_failure(
+            "notify write failed: GattCommunicationStatus(1)",
+            &hints
+        ));
+        assert!(is_ble_noisy_cccd_failure("protocol_error=3", &hints));
+        assert!(is_ble_noisy_cccd_failure("protocol error=3", &hints));
+        // Same noise signature without a CCCD classification is not noise.
+        assert!(!is_ble_noisy_cccd_failure(
+            "service open failed: HRESULT(0x800704C7)",
+            &hints
+        ));
+        // Product hints participate in the kind check exactly like the
+        // caller's own classification does.
+        let listener_hints = BleFailureHints {
+            background_contention: &["background listener"],
+            ..BleFailureHints::NONE
+        };
+        assert!(!is_ble_noisy_cccd_failure(
+            "CCCD write failed during background listener capture: HRESULT(0x800704C7)",
+            &listener_hints
+        ));
     }
 
     #[cfg(target_os = "windows")]
