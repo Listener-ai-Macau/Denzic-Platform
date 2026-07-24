@@ -1,5 +1,7 @@
 #include "denzic_power_policy_v1.h"
 
+#include <stddef.h>
+
 uint32_t denzic_power_policy_v1_blocker_bit(
     denzic_power_policy_v1_blocker_t blocker)
 {

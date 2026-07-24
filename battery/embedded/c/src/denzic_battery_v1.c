@@ -1,5 +1,7 @@
 #include "denzic_battery_v1.h"
 
+#include <stddef.h>
+
 uint8_t denzic_battery_v1_percent_from_mv(
     uint32_t battery_mv,
     uint32_t empty_mv,
