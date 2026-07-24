@@ -1,0 +1,21 @@
+{
+  "name": "denzic_host_audio_v1",
+  "version": 1,
+  "pcm": {
+    "sample_rate_hz": 16000,
+    "channels": 1,
+    "sample_width_bits": 16,
+    "sample_byte_order": "little_endian"
+  },
+  "wav": {
+    "header_bytes": 44,
+    "fmt_chunk_bytes": 16,
+    "audio_format_pcm": 1
+  },
+  "asr": {
+    "openai_transcription_endpoint": "https://api.openai.com/v1/audio/transcriptions",
+    "default_model": "gpt-4o-transcribe",
+    "default_max_upload_bytes": 26214400,
+    "request_timeout_seconds": 120
+  }
+}

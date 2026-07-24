@@ -1,0 +1,11 @@
+add_library(denzic_host_audio_embedded STATIC
+    src/denzic_host_audio_v1.c
+)
+target_include_directories(denzic_host_audio_embedded PUBLIC include)
+target_compile_features(denzic_host_audio_embedded PUBLIC c_std_99)
+
+add_executable(denzic_host_audio_embedded_test
+    tests/test_denzic_host_audio_v1.c
+)
+target_link_libraries(denzic_host_audio_embedded_test PRIVATE denzic_host_audio_embedded)
+add_test(NAME denzic_host_audio_embedded_test COMMAND denzic_host_audio_embedded_test)

@@ -4,6 +4,7 @@ members = [
     "ble_pairing/host/rust",
     "ble_windows/host/rust",
     "device_control/host/rust",
+    "host_audio/host/rust",
     "ota/host/rust",
     "observability/host/rust",
 ]
