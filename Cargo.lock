@@ -217,6 +217,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "denzic-battery-v1-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "denzic-ble-pairing"
 version = "0.1.0"
 
@@ -232,6 +239,13 @@ dependencies = [
 
 [[package]]
 name = "denzic-device-control-v1-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "denzic-device-health-v1-core"
 version = "0.1.0"
 dependencies = [
  "serde",
@@ -260,6 +274,13 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "denzic-power-policy-v1-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

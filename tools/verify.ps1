@@ -40,6 +40,9 @@ try {
     python .\tools\generate_audio_transport_v1.py --check
     if ($LASTEXITCODE -ne 0) { throw "Audio transport generated-source check failed." }
 
+    python .\tools\generate_battery_v1.py --check
+    if ($LASTEXITCODE -ne 0) { throw "Battery generated-source check failed." }
+
     python .\tools\generate_ble_windows_v1.py --check
     if ($LASTEXITCODE -ne 0) { throw "BLE Windows generated-source check failed." }
 
@@ -49,8 +52,14 @@ try {
     python .\tools\generate_device_control_v1.py --check
     if ($LASTEXITCODE -ne 0) { throw "Device-control generated-source check failed." }
 
+    python .\tools\generate_device_health_v1.py --check
+    if ($LASTEXITCODE -ne 0) { throw "Device-health generated-source check failed." }
+
     python .\tools\generate_observability_v1.py --check
     if ($LASTEXITCODE -ne 0) { throw "Observability generated-source check failed." }
+
+    python .\tools\generate_power_policy_v1.py --check
+    if ($LASTEXITCODE -ne 0) { throw "Power-policy generated-source check failed." }
 
     python .\tools\generate_host_audio_v1.py --check
     if ($LASTEXITCODE -ne 0) { throw "Host audio generated-source check failed." }

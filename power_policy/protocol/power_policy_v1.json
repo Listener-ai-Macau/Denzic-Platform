@@ -1,0 +1,36 @@
+{
+  "name": "denzic_power_policy_v1",
+  "version": 1,
+  "enums": {
+    "blocker": [
+      { "name": "recording", "code": 0 },
+      { "name": "audio_transport", "code": 1 },
+      { "name": "diagnostic", "code": 2 },
+      { "name": "pairing", "code": 3 },
+      { "name": "reconnect", "code": 4 },
+      { "name": "storage", "code": 5 },
+      { "name": "command", "code": 6 },
+      { "name": "external_power", "code": 7 },
+      { "name": "ota", "code": 8 },
+      { "name": "touch", "code": 9 },
+      { "name": "menu", "code": 10 },
+      { "name": "display", "code": 11 },
+      { "name": "boot", "code": 12 }
+    ],
+    "state": [
+      { "name": "active", "code": 0 },
+      { "name": "connected_idle", "code": 1 },
+      { "name": "disconnected_idle", "code": 2 },
+      { "name": "shutdown_requested", "code": 3 }
+    ],
+    "shutdown_reason": [
+      { "name": "none", "code": 0 },
+      { "name": "long_idle", "code": 1 },
+      { "name": "manual", "code": 2 },
+      { "name": "low_battery", "code": 3 }
+    ]
+  },
+  "constants": {
+    "max_blocker_index": 31
+  }
+}

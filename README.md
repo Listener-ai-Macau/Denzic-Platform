@@ -5,6 +5,8 @@ Product repositories pin this repository as a Git submodule. Hardware and OS
 details stay in product adapters; wire protocols and state machines live here.
 `capabilities.json` is the machine-readable inventory: an active capability is
 invalid unless its `protocol`, `host`, and `embedded` layers all exist.
+Owner decisions for shared behavior and extraction order are recorded in
+`docs/platform_product_requirements.md`.
 
 Current modules:
 
@@ -35,6 +37,17 @@ Current modules:
   `host_audio/protocol/host_audio_v1.json`. Session management, file
   placement, resampling policy, and non-OpenAI ASR providers (Volcengine
   SAUC, local engines) remain product adapters.
+- `device_health/`: reset/crash-window and safe-mode decisions, startup-check
+  aggregation, and runtime heap/link threshold classification. Reset APIs,
+  retained memory, checks, timers, watchdogs, logging, and status effects stay
+  in product adapters.
+- `battery/`: voltage/percentage modeling, charge-full debounce, notification
+  policy, and the standard Battery Service `0x180F` identifiers. ADC,
+  calibration storage, charger GPIO, GATT calls, and UI remain adapters.
+- `power_policy/`: canonical blockers and deterministic active, idle, and
+  shutdown-request decisions. Activity clocks, persisted settings, GPIO,
+  scheduler/Stop calls, hardware shutdown, BLE tuning, LED, and display
+  effects remain product adapters.
 - `ble_pairing/`: pairing/recovery policy decision core plus the connection-lifecycle
   orchestration layer (`embedded/c/src/denzic_ble_pairing_v1_orchestration.c`, mirrored in
   `host/rust/src/orchestration.rs`): advertising restart routing, payload profile planning,

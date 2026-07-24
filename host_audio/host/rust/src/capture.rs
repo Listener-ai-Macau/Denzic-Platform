@@ -12,9 +12,9 @@
 //! different resamplers.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, StreamConfig};
@@ -22,9 +22,14 @@ use thiserror::Error;
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
 const STOP_POLL_INTERVAL: Duration = Duration::from_millis(25);
+const CALLBACK_WATCHDOG_INTERVAL: Duration = Duration::from_secs(1);
+const FIRST_CALLBACK_DEADLINE: Duration = Duration::from_secs(5);
+const CALLBACK_SILENCE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, Error)]
 pub enum CaptureError {
+    #[error("microphone permission denied")]
+    PermissionDenied,
     #[error("no default input microphone")]
     NoDefaultInputDevice,
     #[error("input_devices: {0}")]
@@ -157,7 +162,7 @@ fn run_capture_thread(
     let supported_config = match device.default_input_config() {
         Ok(config) => config,
         Err(err) => {
-            let err = CaptureError::DefaultInputConfig(err.to_string());
+            let err = classify_startup_error(err.to_string(), CaptureError::DefaultInputConfig);
             let _ = startup_tx.send(Err(err.clone()));
             return Err(err);
         }
@@ -167,6 +172,15 @@ fn run_capture_thread(
     let sample_rate = stream_config.sample_rate.0;
     let channels = stream_config.channels as usize;
     let on_stream_error = options.on_stream_error.clone();
+    let last_callback = Arc::new(Mutex::new(None::<Instant>));
+    let last_callback_for_sink = Arc::clone(&last_callback);
+    let sink: Arc<dyn Fn(&[f32], u32) + Send + Sync> =
+        Arc::new(move |samples: &[f32], rate: u32| {
+            if let Ok(mut slot) = last_callback_for_sink.lock() {
+                *slot = Some(Instant::now());
+            }
+            sink(samples, rate);
+        });
     let err_fn = move |err: cpal::StreamError| {
         if let Some(handler) = &on_stream_error {
             handler(err.to_string());
@@ -198,6 +212,30 @@ fn run_capture_thread(
             &sink,
             err_fn,
         ),
+        SampleFormat::I32 => build_stream::<i32>(
+            &device,
+            &stream_config,
+            channels,
+            sample_rate,
+            &sink,
+            err_fn,
+        ),
+        SampleFormat::I8 => build_stream::<i8>(
+            &device,
+            &stream_config,
+            channels,
+            sample_rate,
+            &sink,
+            err_fn,
+        ),
+        SampleFormat::U8 => build_stream::<u8>(
+            &device,
+            &stream_config,
+            channels,
+            sample_rate,
+            &sink,
+            err_fn,
+        ),
         other => Err(CaptureError::UnsupportedSampleFormat(format!("{other:?}"))),
     };
 
@@ -210,17 +248,75 @@ fn run_capture_thread(
     };
 
     if let Err(err) = stream.play() {
-        let err = CaptureError::StartInputStream(err.to_string());
+        let err = classify_startup_error(err.to_string(), CaptureError::StartInputStream);
         let _ = startup_tx.send(Err(err.clone()));
         return Err(err);
     }
     let _ = startup_tx.send(Ok(()));
 
+    let watchdog_start = Instant::now();
+    let mut next_watchdog_check = watchdog_start + CALLBACK_WATCHDOG_INTERVAL;
+    let mut liveness_reported = false;
     while !stop_flag.load(Ordering::SeqCst) {
         thread::sleep(STOP_POLL_INTERVAL);
+        if stop_flag.load(Ordering::SeqCst) {
+            break;
+        }
+        let now = Instant::now();
+        if !liveness_reported && now >= next_watchdog_check {
+            next_watchdog_check = now + CALLBACK_WATCHDOG_INTERVAL;
+            let callback_time = last_callback.lock().ok().and_then(|slot| *slot);
+            if let Some(message) = liveness_failure_message(watchdog_start, callback_time, now) {
+                if let Some(handler) = &options.on_stream_error {
+                    handler(message);
+                }
+                liveness_reported = true;
+            }
+        }
     }
+    // cpal's CoreAudio backend may keep the render callback alive after a
+    // plain drop. Pause first so microphone ownership is synchronously
+    // released; a pause failure must not prevent final disposal.
+    let _ = stream.pause();
     drop(stream);
     Ok(())
+}
+
+fn classify_startup_error(
+    message: String,
+    fallback: impl FnOnce(String) -> CaptureError,
+) -> CaptureError {
+    let lower = message.to_ascii_lowercase();
+    if ["permission", "denied", "authoriz"]
+        .iter()
+        .any(|word| lower.contains(word))
+    {
+        CaptureError::PermissionDenied
+    } else {
+        fallback(message)
+    }
+}
+
+fn liveness_failure_message(
+    watchdog_start: Instant,
+    last_callback: Option<Instant>,
+    now: Instant,
+) -> Option<String> {
+    match last_callback {
+        Some(last) if now.saturating_duration_since(last) > CALLBACK_SILENCE_TIMEOUT => {
+            Some(format!(
+                "audio callback silent for {} seconds",
+                now.saturating_duration_since(last).as_secs()
+            ))
+        }
+        None if now.saturating_duration_since(watchdog_start) > FIRST_CALLBACK_DEADLINE => {
+            Some(format!(
+                "no audio callback within {} seconds after capture start",
+                now.saturating_duration_since(watchdog_start).as_secs()
+            ))
+        }
+        _ => None,
+    }
 }
 
 fn select_input_device(
@@ -264,7 +360,7 @@ where
             err_fn,
             None,
         )
-        .map_err(|err| CaptureError::BuildInputStream(err.to_string()))
+        .map_err(|err| classify_startup_error(err.to_string(), CaptureError::BuildInputStream))
 }
 
 fn samples_to_f32<T: SampleToF32>(data: &[T]) -> Vec<f32> {
@@ -295,6 +391,24 @@ impl SampleToF32 for u16 {
     }
 }
 
+impl SampleToF32 for i32 {
+    fn to_f32_sample(self) -> f32 {
+        self as f32 / i32::MAX as f32
+    }
+}
+
+impl SampleToF32 for i8 {
+    fn to_f32_sample(self) -> f32 {
+        self as f32 / i8::MAX as f32
+    }
+}
+
+impl SampleToF32 for u8 {
+    fn to_f32_sample(self) -> f32 {
+        (self as f32 - 128.0) / 128.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,6 +431,45 @@ mod tests {
         assert_eq!(0u16.to_f32_sample(), -1.0);
         assert_eq!(2.5f32.to_f32_sample(), 1.0);
         assert_eq!((-2.5f32).to_f32_sample(), -1.0);
+        assert_eq!(i32::MAX.to_f32_sample(), 1.0);
+        assert_eq!(i8::MAX.to_f32_sample(), 1.0);
+        assert_eq!(0u8.to_f32_sample(), -1.0);
+    }
+
+    #[test]
+    fn startup_permission_keywords_map_to_permission_denied() {
+        for message in [
+            "permission denied",
+            "not authorized",
+            "access DENIED by backend",
+        ] {
+            assert!(matches!(
+                classify_startup_error(message.to_string(), CaptureError::BuildInputStream),
+                CaptureError::PermissionDenied
+            ));
+        }
+    }
+
+    #[test]
+    fn liveness_policy_distinguishes_first_callback_and_runtime_silence() {
+        let start = Instant::now();
+        assert!(liveness_failure_message(start, None, start + Duration::from_secs(5)).is_none());
+        assert!(
+            liveness_failure_message(start, None, start + Duration::from_secs(6))
+                .unwrap()
+                .contains("no audio callback")
+        );
+
+        let callback = start + Duration::from_secs(2);
+        assert!(
+            liveness_failure_message(start, Some(callback), callback + Duration::from_secs(3))
+                .is_none()
+        );
+        assert!(
+            liveness_failure_message(start, Some(callback), callback + Duration::from_secs(4))
+                .unwrap()
+                .contains("audio callback silent")
+        );
     }
 
     #[test]

@@ -144,6 +144,60 @@
           "observability/embedded/c/src/denzic_diag_log_store.c"
         ]
       }
+    },
+    {
+      "id": "device_health",
+      "status": "active",
+      "contract": "denzic_device_health_v1",
+      "layers": {
+        "protocol": [
+          "device_health/protocol/device_health_v1.json"
+        ],
+        "host": [
+          "device_health/host/rust/src/lib.rs"
+        ],
+        "embedded": [
+          "device_health/embedded/c/include/denzic_device_health_v1_generated.h",
+          "device_health/embedded/c/include/denzic_device_health_v1.h",
+          "device_health/embedded/c/src/denzic_device_health_v1.c"
+        ]
+      }
+    },
+    {
+      "id": "battery",
+      "status": "active",
+      "contract": "denzic_battery_v1",
+      "layers": {
+        "protocol": [
+          "battery/protocol/battery_v1.json"
+        ],
+        "host": [
+          "battery/host/rust/src/lib.rs"
+        ],
+        "embedded": [
+          "battery/embedded/c/include/denzic_battery_v1_generated.h",
+          "battery/embedded/c/include/denzic_battery_v1.h",
+          "battery/embedded/c/src/denzic_battery_v1.c"
+        ]
+      }
+    },
+    {
+      "id": "power_policy",
+      "status": "active",
+      "contract": "denzic_power_policy_v1",
+      "layers": {
+        "protocol": [
+          "power_policy/protocol/power_policy_v1.json"
+        ],
+        "host": [
+          "power_policy/host/rust/src/lib.rs"
+        ],
+        "embedded": [
+          "power_policy/embedded/c/include/denzic_power_policy_v1_generated.h",
+          "power_policy/embedded/c/include/denzic_power_policy_v1.h",
+          "power_policy/embedded/c/src/denzic_power_policy_v1.c"
+        ]
+      }
     }
   ],
   "planned": []

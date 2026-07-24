@@ -12,9 +12,10 @@ stays in the platform and what product adapters must inject.
 - `host/rust/src/capture.rs` — cpal capture: input-device enumeration and
   selection (by name or system default), default-config negotiation,
   sample-format dispatch (f32 / i16 / u16), arithmetic-mean mono downmix, the
-  capture thread lifecycle (startup handshake, stop flag, join), and startup
-  error classification (`CaptureError`). The sink callback receives mono f32
-  frames plus the device sample rate.
+  capture thread lifecycle (startup handshake, stop flag, join), startup
+  permission classification (`CaptureError`), first-callback/runtime-silence
+  watchdog, and pause-before-drop microphone release. The sink callback
+  receives mono f32 frames plus the device sample rate.
 - `host/rust/src/wav.rs` — the 44-byte WAV header builder, in-memory WAV
   encoding, and the appending `WavWriter` that backfills RIFF/data sizes on
   finalize/drop. `embedded/c/src/denzic_host_audio_v1.c` mirrors the header
@@ -45,9 +46,9 @@ stays in the platform and what product adapters must inject.
   SAUC and local engines remain Listener-Type adapters implementing the
   platform traits (tracked as a follow-up).
 - Runtime stream-error reporting: products pass `on_stream_error` to route
-  cpal runtime errors into their own diagnostics.
-- Microphone permission flows: the capture engine surfaces OS errors
-  verbatim; permission UX and keyword classification stay with the product.
+  cpal runtime and liveness errors into their own diagnostics.
+- Microphone permission UX stays with the product; the capture engine owns the
+  stable keyword classification and returns `CaptureError::PermissionDenied`.
 
 ## Wiring
 

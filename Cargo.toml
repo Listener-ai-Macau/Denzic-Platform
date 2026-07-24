@@ -1,11 +1,14 @@
 [workspace]
 members = [
     "audio/host/rust",
+    "battery/host/rust",
     "ble_pairing/host/rust",
     "ble_windows/host/rust",
     "device_control/host/rust",
+    "device_health/host/rust",
     "host_audio/host/rust",
     "ota/host/rust",
     "observability/host/rust",
+    "power_policy/host/rust",
 ]
 resolver = "2"

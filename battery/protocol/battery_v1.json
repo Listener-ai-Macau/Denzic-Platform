@@ -1,0 +1,31 @@
+{
+  "name": "denzic_battery_v1",
+  "version": 1,
+  "enums": {
+    "charge_state": [
+      { "name": "unknown", "code": 0 },
+      { "name": "discharging", "code": 1 },
+      { "name": "charging", "code": 2 },
+      { "name": "full", "code": 3 }
+    ],
+    "notify_reason": [
+      { "name": "none", "code": 0 },
+      { "name": "initial", "code": 1 },
+      { "name": "level_delta", "code": 2 },
+      { "name": "periodic", "code": 3 },
+      { "name": "forced", "code": 4 }
+    ]
+  },
+  "constants": {
+    "battery_service_uuid16": 6159,
+    "battery_level_uuid16": 10777,
+    "invalid_level": 255,
+    "default_empty_mv": 2850,
+    "default_full_mv": 4150,
+    "notify_threshold_percent": 1,
+    "force_refresh_interval_ms": 60000,
+    "charge_full_min_mv": 4050,
+    "charge_full_min_percent": 88,
+    "charge_full_debounce_ms": 10000
+  }
+}
