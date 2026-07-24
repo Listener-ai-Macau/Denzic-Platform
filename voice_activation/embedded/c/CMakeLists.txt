@@ -1,0 +1,10 @@
+add_library(denzic_voice_activation_v1 STATIC
+    src/denzic_voice_activation_v1.c
+)
+target_include_directories(denzic_voice_activation_v1 PUBLIC include)
+
+add_executable(test_denzic_voice_activation_v1
+    tests/test_denzic_voice_activation_v1.c
+)
+target_link_libraries(test_denzic_voice_activation_v1 PRIVATE denzic_voice_activation_v1)
+add_test(NAME denzic_voice_activation_v1 COMMAND test_denzic_voice_activation_v1)

@@ -198,6 +198,24 @@
           "power_policy/embedded/c/src/denzic_power_policy_v1.c"
         ]
       }
+    },
+    {
+      "id": "voice_activation",
+      "status": "active",
+      "contract": "denzic_voice_activation_v1",
+      "layers": {
+        "protocol": [
+          "voice_activation/protocol/voice_activation_v1.json"
+        ],
+        "host": [
+          "voice_activation/host/rust/src/lib.rs"
+        ],
+        "embedded": [
+          "voice_activation/embedded/c/include/denzic_voice_activation_v1_generated.h",
+          "voice_activation/embedded/c/include/denzic_voice_activation_v1.h",
+          "voice_activation/embedded/c/src/denzic_voice_activation_v1.c"
+        ]
+      }
     }
   ],
   "planned": []

@@ -1,0 +1,33 @@
+{
+  "name": "denzic_voice_activation_v1",
+  "version": 1,
+  "enums": {
+    "state": [
+      { "name": "disabled", "code": 0 },
+      { "name": "monitoring", "code": 1 },
+      { "name": "speech_confirming", "code": 2 },
+      { "name": "recording", "code": 3 },
+      { "name": "tail", "code": 4 },
+      { "name": "cooldown", "code": 5 }
+    ],
+    "action": [
+      { "name": "none", "code": 0 },
+      { "name": "start", "code": 1 },
+      { "name": "stop", "code": 2 }
+    ],
+    "stop_reason": [
+      { "name": "none", "code": 0 },
+      { "name": "silence", "code": 1 },
+      { "name": "max_duration", "code": 2 }
+    ]
+  },
+  "constants": {
+    "default_speech_confirm_ms": 300,
+    "default_pre_roll_ms": 600,
+    "default_silence_stop_ms": 1000,
+    "default_tail_ms": 250,
+    "default_min_session_ms": 500,
+    "default_max_session_ms": 60000,
+    "default_cooldown_ms": 1500
+  }
+}
