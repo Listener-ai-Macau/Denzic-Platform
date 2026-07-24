@@ -228,6 +228,34 @@ pub enum SessionErrorCode {
     Unknown(u16),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionStopOrigin {
+    User,
+    VoiceActivation,
+    Unknown(u16),
+}
+
+impl SessionStopOrigin {
+    pub const fn from_wire(value: u16) -> Self {
+        match value {
+            value if value == generated::SESSION_STOP_ORIGIN_USER => Self::User,
+            value if value == generated::SESSION_STOP_ORIGIN_VOICE_ACTIVATION => {
+                Self::VoiceActivation
+            }
+            other => Self::Unknown(other),
+        }
+    }
+
+    pub const fn wire_value(self) -> u16 {
+        match self {
+            Self::User => generated::SESSION_STOP_ORIGIN_USER,
+            Self::VoiceActivation => generated::SESSION_STOP_ORIGIN_VOICE_ACTIVATION,
+            Self::Unknown(value) => value,
+        }
+    }
+}
+
 impl SessionErrorCode {
     pub const fn from_wire(value: u16) -> Self {
         match value {
@@ -481,12 +509,24 @@ pub fn build_audio_data_notification(
 }
 
 pub fn build_session_stop_notification(session_id: u32, expected_packet_count: u16) -> Vec<u8> {
+    build_session_stop_notification_with_origin(
+        session_id,
+        expected_packet_count,
+        SessionStopOrigin::User,
+    )
+}
+
+pub fn build_session_stop_notification_with_origin(
+    session_id: u32,
+    expected_packet_count: u16,
+    origin: SessionStopOrigin,
+) -> Vec<u8> {
     build_notification(
         PacketType::SessionStop,
         session_id,
         expected_packet_count,
         &[],
-        0,
+        origin.wire_value(),
     )
     .expect("empty control packet fits VKA1 header")
 }
@@ -579,6 +619,7 @@ pub enum SessionEvent {
     Stopped {
         session_id: u32,
         expected_packet_count: u16,
+        origin: SessionStopOrigin,
     },
     Cancelled {
         session_id: u32,
@@ -608,6 +649,8 @@ pub struct SessionStats {
     pub start_inferred_from_audio: bool,
     pub terminal_received: bool,
     pub end_reason: Option<SessionEndReason>,
+    #[serde(default)]
+    pub stop_origin: Option<SessionStopOrigin>,
     pub expected_packet_count: Option<usize>,
     pub received_packet_count: usize,
     pub missing_packet_count: usize,
@@ -666,6 +709,7 @@ pub enum StreamingSessionEvent {
     Stopped {
         session_id: u32,
         expected_packet_count: u16,
+        origin: SessionStopOrigin,
     },
     Cancelled {
         session_id: u32,
@@ -720,9 +764,11 @@ impl StreamingSessionCollector {
             SessionEvent::Stopped {
                 session_id,
                 expected_packet_count,
+                origin,
             } => StreamingSessionEvent::Stopped {
                 session_id,
                 expected_packet_count,
+                origin,
             },
             SessionEvent::Cancelled {
                 session_id,
@@ -761,6 +807,7 @@ pub struct SessionCollector {
     terminal_received: bool,
     expected_packet_count: Option<u16>,
     end_reason: Option<SessionEndReason>,
+    stop_origin: Option<SessionStopOrigin>,
     audio_packets: BTreeMap<u16, Vec<u8>>,
     packet_pcm_bytes: BTreeMap<u16, usize>,
     asr_boundary_audio_packets: BTreeMap<u16, Vec<u8>>,
@@ -800,9 +847,12 @@ impl SessionCollector {
                 self.terminal_received = true;
                 self.expected_packet_count = Some(header.expected_packet_count);
                 self.end_reason = Some(SessionEndReason::Stop);
+                let origin = SessionStopOrigin::from_wire(header.packet_pcm_bytes);
+                self.stop_origin = Some(origin);
                 SessionEvent::Stopped {
                     session_id: header.session_id,
                     expected_packet_count: header.expected_packet_count,
+                    origin,
                 }
             }
             PacketType::SessionCancel => {
@@ -918,6 +968,7 @@ impl SessionCollector {
             start_inferred_from_audio: self.start_inferred_from_audio,
             terminal_received: self.terminal_received,
             end_reason: self.end_reason,
+            stop_origin: self.stop_origin,
             expected_packet_count: self.expected_packet_count.map(usize::from),
             received_packet_count: self.received_packet_count(),
             missing_packet_count: missing_packet_indices.len(),
@@ -1561,10 +1612,39 @@ mod tests {
             StreamingSessionEvent::Stopped {
                 session_id: 205,
                 expected_packet_count: 2,
+                origin: SessionStopOrigin::User,
             }
         );
         assert!(collector.inner().has_successful_complete_session());
         assert_eq!(collector.inner().reconstructed_pcm(), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn streaming_collector_preserves_voice_activation_stop_origin() {
+        let mut collector = StreamingSessionCollector::default();
+        collector
+            .handle_notification(&build_session_start_notification(206))
+            .expect("start");
+        let stopped = collector
+            .handle_notification(&build_session_stop_notification_with_origin(
+                206,
+                0,
+                SessionStopOrigin::VoiceActivation,
+            ))
+            .expect("stop");
+
+        assert_eq!(
+            stopped,
+            StreamingSessionEvent::Stopped {
+                session_id: 206,
+                expected_packet_count: 0,
+                origin: SessionStopOrigin::VoiceActivation,
+            }
+        );
+        assert_eq!(
+            collector.inner().stats().stop_origin,
+            Some(SessionStopOrigin::VoiceActivation)
+        );
     }
 
     #[test]
@@ -1586,6 +1666,7 @@ mod tests {
             StreamingSessionEvent::Stopped {
                 session_id: 209,
                 expected_packet_count: 2,
+                origin: SessionStopOrigin::User,
             }
         );
         assert!(!collector.inner().has_successful_complete_session());

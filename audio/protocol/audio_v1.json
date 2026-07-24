@@ -15,6 +15,10 @@
     "session_cancel": 4,
     "session_error": 5
   },
+  "session_stop_origins": {
+    "user": 0,
+    "voice_activation": 1
+  },
   "session_errors": {
     "none": 0,
     "queue_full": 1,
