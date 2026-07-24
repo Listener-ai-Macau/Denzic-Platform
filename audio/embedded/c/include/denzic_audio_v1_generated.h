@@ -29,6 +29,11 @@ typedef enum {
 } denzic_audio_v1_packet_type_t;
 
 typedef enum {
+    DENZIC_AUDIO_V1_SESSION_START_ORIGIN_USER = 0,
+    DENZIC_AUDIO_V1_SESSION_START_ORIGIN_VOICE_ACTIVATION = 1,
+} denzic_audio_v1_session_start_origin_t;
+
+typedef enum {
     DENZIC_AUDIO_V1_SESSION_STOP_ORIGIN_USER = 0,
     DENZIC_AUDIO_V1_SESSION_STOP_ORIGIN_VOICE_ACTIVATION = 1,
 } denzic_audio_v1_session_stop_origin_t;

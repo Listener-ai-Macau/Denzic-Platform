@@ -236,6 +236,34 @@ pub enum SessionStopOrigin {
     Unknown(u16),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionStartOrigin {
+    User,
+    VoiceActivation,
+    Unknown(u16),
+}
+
+impl SessionStartOrigin {
+    pub const fn from_wire(value: u16) -> Self {
+        match value {
+            value if value == generated::SESSION_START_ORIGIN_USER => Self::User,
+            value if value == generated::SESSION_START_ORIGIN_VOICE_ACTIVATION => {
+                Self::VoiceActivation
+            }
+            other => Self::Unknown(other),
+        }
+    }
+
+    pub const fn wire_value(self) -> u16 {
+        match self {
+            Self::User => generated::SESSION_START_ORIGIN_USER,
+            Self::VoiceActivation => generated::SESSION_START_ORIGIN_VOICE_ACTIVATION,
+            Self::Unknown(value) => value,
+        }
+    }
+}
+
 impl SessionStopOrigin {
     pub const fn from_wire(value: u16) -> Self {
         match value {
@@ -490,8 +518,21 @@ pub fn build_session_replay_notifications(
 }
 
 pub fn build_session_start_notification(session_id: u32) -> Vec<u8> {
-    build_notification(PacketType::SessionStart, session_id, 0, &[], 0)
-        .expect("empty control packet fits VKA1 header")
+    build_session_start_notification_with_origin(session_id, SessionStartOrigin::User)
+}
+
+pub fn build_session_start_notification_with_origin(
+    session_id: u32,
+    origin: SessionStartOrigin,
+) -> Vec<u8> {
+    build_notification(
+        PacketType::SessionStart,
+        session_id,
+        0,
+        &[],
+        origin.wire_value(),
+    )
+    .expect("empty control packet fits VKA1 header")
 }
 
 pub fn build_audio_data_notification(
@@ -610,6 +651,7 @@ fn build_notification(
 pub enum SessionEvent {
     Started {
         session_id: u32,
+        origin: SessionStartOrigin,
     },
     AudioData {
         session_id: u32,
@@ -647,6 +689,8 @@ pub struct SessionStats {
     pub session_id: Option<u32>,
     pub explicit_start_received: bool,
     pub start_inferred_from_audio: bool,
+    #[serde(default)]
+    pub start_origin: Option<SessionStartOrigin>,
     pub terminal_received: bool,
     pub end_reason: Option<SessionEndReason>,
     #[serde(default)]
@@ -704,6 +748,7 @@ pub struct StreamingPcmChunk {
 pub enum StreamingSessionEvent {
     Started {
         session_id: u32,
+        origin: SessionStartOrigin,
     },
     PcmChunk(StreamingPcmChunk),
     Stopped {
@@ -750,7 +795,9 @@ impl StreamingSessionCollector {
             .unwrap_or_default();
         let event = self.inner.handle_packet(packet);
         match event {
-            SessionEvent::Started { session_id } => StreamingSessionEvent::Started { session_id },
+            SessionEvent::Started { session_id, origin } => {
+                StreamingSessionEvent::Started { session_id, origin }
+            }
             SessionEvent::AudioData {
                 session_id,
                 packet_sequence,
@@ -804,6 +851,7 @@ pub struct SessionCollector {
     session_id: Option<u32>,
     explicit_start_received: bool,
     start_inferred_from_audio: bool,
+    start_origin: Option<SessionStartOrigin>,
     terminal_received: bool,
     expected_packet_count: Option<u16>,
     end_reason: Option<SessionEndReason>,
@@ -835,8 +883,11 @@ impl SessionCollector {
                 self.reset_for_session(header.session_id);
                 self.explicit_start_received = true;
                 self.start_inferred_from_audio = false;
+                let origin = SessionStartOrigin::from_wire(header.packet_pcm_bytes);
+                self.start_origin = Some(origin);
                 SessionEvent::Started {
                     session_id: header.session_id,
+                    origin,
                 }
             }
             PacketType::AudioData => self.handle_audio_packet(packet),
@@ -966,6 +1017,7 @@ impl SessionCollector {
             session_id: self.session_id,
             explicit_start_received: self.explicit_start_received,
             start_inferred_from_audio: self.start_inferred_from_audio,
+            start_origin: self.start_origin,
             terminal_received: self.terminal_received,
             end_reason: self.end_reason,
             stop_origin: self.stop_origin,
@@ -1454,7 +1506,10 @@ mod tests {
             collector
                 .handle_notification(&packet(PacketType::SessionStart, 152, 0, &[], Some(0)))
                 .expect("start"),
-            StreamingSessionEvent::Started { session_id: 152 }
+            StreamingSessionEvent::Started {
+                session_id: 152,
+                origin: SessionStartOrigin::User,
+            }
         );
         assert_eq!(
             collector
@@ -1588,7 +1643,13 @@ mod tests {
             .handle_notification(&packet(PacketType::SessionStop, 205, 2, &[], Some(0)))
             .expect("stop");
 
-        assert_eq!(started, StreamingSessionEvent::Started { session_id: 205 });
+        assert_eq!(
+            started,
+            StreamingSessionEvent::Started {
+                session_id: 205,
+                origin: SessionStartOrigin::User,
+            }
+        );
         assert_eq!(
             chunk_0,
             StreamingSessionEvent::PcmChunk(StreamingPcmChunk {
@@ -1645,6 +1706,41 @@ mod tests {
             collector.inner().stats().stop_origin,
             Some(SessionStopOrigin::VoiceActivation)
         );
+    }
+
+    #[test]
+    fn streaming_collector_preserves_session_start_origin() {
+        let mut collector = StreamingSessionCollector::default();
+        let started = collector
+            .handle_notification(&build_session_start_notification_with_origin(
+                209,
+                SessionStartOrigin::VoiceActivation,
+            ))
+            .expect("voice activation start");
+
+        assert_eq!(
+            started,
+            StreamingSessionEvent::Started {
+                session_id: 209,
+                origin: SessionStartOrigin::VoiceActivation,
+            }
+        );
+        assert_eq!(
+            collector.inner().stats().start_origin,
+            Some(SessionStartOrigin::VoiceActivation)
+        );
+    }
+
+    #[test]
+    fn inferred_session_start_has_no_claimed_origin() {
+        let mut collector = SessionCollector::default();
+        collector
+            .handle_notification(&packet(PacketType::AudioData, 210, 0, &[1, 2], None))
+            .expect("audio");
+
+        let stats = collector.stats();
+        assert!(stats.start_inferred_from_audio);
+        assert_eq!(stats.start_origin, None);
     }
 
     #[test]

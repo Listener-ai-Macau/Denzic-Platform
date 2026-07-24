@@ -35,6 +35,8 @@ def render_rust(spec):
     ]
     for name, value in upper_items(spec["packet_types"]):
         lines.append(f"pub const PACKET_TYPE_{name}: u8 = {value};")
+    for name, value in upper_items(spec["session_start_origins"]):
+        lines.append(f"pub const SESSION_START_ORIGIN_{name}: u16 = {value};")
     for name, value in upper_items(spec["session_stop_origins"]):
         lines.append(f"pub const SESSION_STOP_ORIGIN_{name}: u16 = {value};")
     for name, value in upper_items(spec["session_errors"]):
@@ -99,6 +101,13 @@ def render_c(spec):
     lines.extend([
         "    DENZIC_AUDIO_V1_PACKET_TYPE_AUDIO_CHUNK = DENZIC_AUDIO_V1_PACKET_TYPE_AUDIO_DATA,",
         "} denzic_audio_v1_packet_type_t;",
+        "",
+        "typedef enum {",
+    ])
+    for name, value in upper_items(spec["session_start_origins"]):
+        lines.append(f"    DENZIC_AUDIO_V1_SESSION_START_ORIGIN_{name} = {value},")
+    lines.extend([
+        "} denzic_audio_v1_session_start_origin_t;",
         "",
         "typedef enum {",
     ])
