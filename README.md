@@ -29,12 +29,23 @@ Current modules:
   and the BLE diagnostic log GATT pull contract with its OS-free chunk codec
   (`embedded/c/src/denzic_diag_log_gatt_v1.c`).
 - `device_control/`: transport-neutral discovery, lifecycle, ownership, capability, setting-readback, and command-transaction core. BLE, USB, Wi-Fi, and serial remain product adapters.
+- `host_audio/`: host-side microphone capture (cpal), the 16 kHz / mono / 16-bit
+  PCM WAV container core, and the ASR provider contracts with an
+  OpenAI-compatible batch client, driven by
+  `host_audio/protocol/host_audio_v1.json`. Session management, file
+  placement, resampling policy, and non-OpenAI ASR providers (Volcengine
+  SAUC, local engines) remain product adapters.
 - `ble_pairing/`: pairing/recovery policy decision core plus the connection-lifecycle
   orchestration layer (`embedded/c/src/denzic_ble_pairing_v1_orchestration.c`, mirrored in
   `host/rust/src/orchestration.rs`): advertising restart routing, payload profile planning,
   disconnect duplicate filtering, bond-delete recovery sequencing, and reattach evidence
   classification, driven by `ble_pairing/protocol/ble_pairing_v1.json`. Timers, BLE-stack
   calls, LED output, and storage stay in product adapters.
+- `tools/release_gate/`: product-independent release-gate toolkit. The
+  version-consistency gate (`version_check.py`) runs from a per-product JSON
+  config (canonical version source, files that must agree, optional git-tag
+  requirement); product repositories call it through thin wrappers that keep
+  their original command-line interface and exit codes.
 
 The portable C recording core under `audio/embedded/c` owns recording state,
 session transitions, PCM batch accounting, and format metadata. Product

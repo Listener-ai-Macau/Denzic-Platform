@@ -52,6 +52,9 @@ try {
     python .\tools\generate_observability_v1.py --check
     if ($LASTEXITCODE -ne 0) { throw "Observability generated-source check failed." }
 
+    python .\tools\generate_host_audio_v1.py --check
+    if ($LASTEXITCODE -ne 0) { throw "Host audio generated-source check failed." }
+
     python .\tools\verify_adapter_compatibility.py --manifest .\compatibility\listener_adapter_v1.json
     if ($LASTEXITCODE -ne 0) { throw "Supported adapter compatibility check failed." }
 
@@ -60,6 +63,9 @@ try {
 
     python .\tools\verify_observability_adapter_docs.py
     if ($LASTEXITCODE -ne 0) { throw "Observability adapter documentation check failed." }
+
+    python .\tools\release_gate\self_test.py
+    if ($LASTEXITCODE -ne 0) { throw "Release gate self-test failed." }
 
     cargo fmt --all -- --check
     if ($LASTEXITCODE -ne 0) { throw "Rust formatting check failed." }

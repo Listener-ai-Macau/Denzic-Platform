@@ -75,7 +75,8 @@
         ],
         "host": [
           "ble_pairing/host/rust/src/lib.rs",
-          "ble_pairing/host/rust/src/orchestration.rs"
+          "ble_pairing/host/rust/src/orchestration.rs",
+          "ble_pairing/host/rust/src/gatt_cache.rs"
         ],
         "embedded": [
           "ble_pairing/embedded/c/include/denzic_ble_pairing_v1.h",
@@ -98,6 +99,28 @@
         ],
         "embedded": [
           "ble_windows/embedded/c/include/denzic_ble_windows_v1_generated.h"
+        ]
+      }
+    },
+    {
+      "id": "host_audio",
+      "status": "active",
+      "contract": "denzic_host_audio_v1",
+      "layers": {
+        "protocol": [
+          "host_audio/protocol/host_audio_v1.json"
+        ],
+        "host": [
+          "host_audio/host/rust/src/lib.rs",
+          "host_audio/host/rust/src/capture.rs",
+          "host_audio/host/rust/src/wav.rs",
+          "host_audio/host/rust/src/asr.rs",
+          "host_audio/host/rust/src/asr_openai.rs"
+        ],
+        "embedded": [
+          "host_audio/embedded/c/include/denzic_host_audio_v1_generated.h",
+          "host_audio/embedded/c/include/denzic_host_audio_v1.h",
+          "host_audio/embedded/c/src/denzic_host_audio_v1.c"
         ]
       }
     },
