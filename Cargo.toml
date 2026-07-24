@@ -10,6 +10,7 @@ members = [
     "ota/host/rust",
     "observability/host/rust",
     "power_policy/host/rust",
+    "speaker_verification/host/rust",
     "voice_activation/host/rust",
 ]
 resolver = "2"

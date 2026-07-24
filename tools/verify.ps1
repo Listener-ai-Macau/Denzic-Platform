@@ -61,6 +61,12 @@ try {
     python .\tools\generate_power_policy_v1.py --check
     if ($LASTEXITCODE -ne 0) { throw "Power-policy generated-source check failed." }
 
+    python .\tools\generate_speaker_verification_v1.py --check
+    if ($LASTEXITCODE -ne 0) { throw "Speaker-verification generated-source check failed." }
+
+    python .\tools\generate_voice_activation_v1.py --check
+    if ($LASTEXITCODE -ne 0) { throw "Voice-activation generated-source check failed." }
+
     python .\tools\generate_host_audio_v1.py --check
     if ($LASTEXITCODE -ne 0) { throw "Host audio generated-source check failed." }
 

@@ -200,6 +200,24 @@
       }
     },
     {
+      "id": "speaker_verification",
+      "status": "active",
+      "contract": "denzic_speaker_verification_v1",
+      "layers": {
+        "protocol": [
+          "speaker_verification/protocol/speaker_verification_v1.json"
+        ],
+        "host": [
+          "speaker_verification/host/rust/src/lib.rs"
+        ],
+        "embedded": [
+          "speaker_verification/embedded/c/include/denzic_speaker_verification_v1_generated.h",
+          "speaker_verification/embedded/c/include/denzic_speaker_verification_v1.h",
+          "speaker_verification/embedded/c/src/denzic_speaker_verification_v1.c"
+        ]
+      }
+    },
+    {
       "id": "voice_activation",
       "status": "active",
       "contract": "denzic_voice_activation_v1",

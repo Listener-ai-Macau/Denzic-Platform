@@ -1,0 +1,36 @@
+{
+  "name": "denzic_speaker_verification_v1",
+  "version": 1,
+  "enums": {
+    "candidate_origin": [
+      { "name": "manual", "code": 0 },
+      { "name": "automatic", "code": 1 },
+      { "name": "enrollment", "code": 2 }
+    ],
+    "state": [
+      { "name": "idle", "code": 0 },
+      { "name": "buffering", "code": 1 },
+      { "name": "released", "code": 2 },
+      { "name": "discarded", "code": 3 },
+      { "name": "error", "code": 4 }
+    ],
+    "verdict": [
+      { "name": "pending", "code": 0 },
+      { "name": "match", "code": 1 },
+      { "name": "non_match", "code": 2 },
+      { "name": "unavailable", "code": 3 }
+    ],
+    "action": [
+      { "name": "none", "code": 0 },
+      { "name": "buffer", "code": 1 },
+      { "name": "release", "code": 2 },
+      { "name": "discard", "code": 3 },
+      { "name": "bypass", "code": 4 }
+    ]
+  },
+  "constants": {
+    "default_score_milli": 500,
+    "default_min_candidate_ms": 1000,
+    "default_max_candidate_ms": 10000
+  }
+}

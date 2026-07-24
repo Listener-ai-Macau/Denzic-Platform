@@ -284,6 +284,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "denzic-speaker-verification-v1-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "denzic-voice-activation-v1-core"
 version = "0.1.0"
 dependencies = [
