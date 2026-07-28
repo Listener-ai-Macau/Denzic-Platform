@@ -14,6 +14,7 @@ use windows::Devices::Bluetooth::GenericAttributeProfile::{
     GattCharacteristic, GattClientCharacteristicConfigurationDescriptorValue,
     GattCommunicationStatus, GattDeviceService, GattWriteOption,
 };
+use windows::Foundation::IAsyncOperation;
 use windows::Storage::Streams::{DataReader, DataWriter, IBuffer};
 
 use crate::wait::{
@@ -84,6 +85,20 @@ pub fn read_characteristic_bytes_with_timeout(
             .map_err(|err| format!("BLE {label} read value failed: {err}"))?,
     )
     .map_err(|err| format!("BLE {label} read buffer failed: {err}"))
+}
+
+/// Start a GATT write and return the async operation without waiting.
+/// Used for OTA WWR pipelining so the host can keep multiple ATT writes in flight.
+pub fn start_gatt_write_with_option_async(
+    characteristic: &GattCharacteristic,
+    bytes: &[u8],
+    write_option: GattWriteOption,
+    label: &str,
+) -> Result<IAsyncOperation<GattCommunicationStatus>, String> {
+    let buffer = bytes_to_buffer(bytes)?;
+    characteristic
+        .WriteValueWithOptionAsync(&buffer, write_option)
+        .map_err(|err| format!("BLE {label} write failed: {err}"))
 }
 
 pub fn write_gatt_value_with_timeout(

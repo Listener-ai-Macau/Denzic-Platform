@@ -402,6 +402,23 @@ impl<'a, T: OtaV1Transport, C: OtaClock> OtaTransferEngine<'a, T, C> {
                 ),
             ));
         }
+        // Prefer ACTIVE_LINK before bulk so the first windows use the full size.
+        // Cap polls: each full status-retry set is expensive on flaky Windows GATT.
+        if !active_link_confirmed {
+            for attempt in 0..3u8 {
+                self.timed_status_retry_wait(attempt.saturating_add(1));
+                if let Ok(status) = self.read_status_with_retry() {
+                    if validate_receiving_status(status, expected_size).is_ok() {
+                        active_link_confirmed = status.active_link_confirmed();
+                        self.report.active_link_confirmed = active_link_confirmed;
+                        if active_link_confirmed {
+                            window_chunks = configured_window;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
         let mut stalled_windows = 0u8;
         on_progress(confirmed_offset, firmware.len());
 
@@ -431,12 +448,31 @@ impl<'a, T: OtaV1Transport, C: OtaClock> OtaTransferEngine<'a, T, C> {
             self.timed_control_write(&sync)
                 .map_err(|error| format!("OTA sync failed: {error}"))
                 .map_err(|error| self.fail_abort(TransferPhase::Sync, error))?;
-            let status = self
+            let mut status = self
                 .read_status_with_retry()
                 .map_err(|error| self.fail_abort(TransferPhase::StatusRead, error))?;
             validate_receiving_status(status, expected_size)
                 .map_err(|error| self.fail_abort(TransferPhase::Device, error))?;
-            let device_offset = status.bytes_written as usize;
+            let mut device_offset = status.bytes_written as usize;
+            // Host WWR "Success" can complete before flash catches up. A few
+            // single-shot status polls (not nested 5-attempt retries) absorb lag
+            // without exploding status_read count.
+            let mut catch_up = 0u8;
+            while device_offset < send_offset && catch_up < 4 {
+                catch_up = catch_up.saturating_add(1);
+                self.timed_status_retry_wait(catch_up);
+                self.report.status_reads += 1;
+                match self
+                    .timed_status_read()
+                    .and_then(|bytes| parse_status(&bytes))
+                {
+                    Ok(next) if validate_receiving_status(next, expected_size).is_ok() => {
+                        status = next;
+                        device_offset = status.bytes_written as usize;
+                    }
+                    Ok(_) | Err(_) => break,
+                }
+            }
             if device_offset > firmware.len() {
                 return Err(self.fail_abort(
                     TransferPhase::Device,

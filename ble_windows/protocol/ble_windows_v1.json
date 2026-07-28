@@ -5,7 +5,7 @@
   "optional_read_timeout_ms": 2000,
   "cccd_enable_timeout_ms": 8000,
   "cccd_enable_retry_delays_ms": [250, 750, 1500],
-  "async_poll_interval_ms": 25,
+  "async_poll_interval_ms": 1,
   "create_no_window_flag": 134217728,
   "failure_kinds": [
     { "name": "device_missing", "code": 0 },
