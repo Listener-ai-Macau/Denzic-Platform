@@ -10,7 +10,14 @@
     "service_uuid": "1b55f597-f09c-4c7f-9529-adfa64983b06",
     "control_uuid": "206c5e29-c64d-4392-8180-66463788533c",
     "data_uuid": "fbc4b0fb-6102-4bd1-abe4-e5e90a9a7e12",
+    "data_b_uuid": "fbc4b0fb-6102-4bd1-abe4-e5e90a9a7e13",
     "status_uuid": "e571544a-7c41-4650-b0d6-ccebfe1db489"
+  },
+  "dual_lane": {
+    "description": "Optional second data characteristic for dual WWR. Host may alternate DATA/DATA_B; device must reorder by offset before denzic_ota_v1_handle_data.",
+    "recommended_reorder_slots": 16,
+    "recommended_window_chunks": 400,
+    "recommended_inactive_link_window_chunks": 400
   },
   "status_flags": {
     "active_link_confirmed": 1

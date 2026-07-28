@@ -47,6 +47,13 @@ impl OtaStatus {
     }
 }
 
+/// Recommended bulk window when dual-lane DATA+DATA_B is available (Listener
+/// closed-loop ~46 KB/s on Windows WWR). Products should prefer these over
+/// legacy tiny windows (e.g. Companion's historical 8).
+pub const RECOMMENDED_DUAL_LANE_WINDOW_CHUNKS: u16 = 400;
+pub const RECOMMENDED_DUAL_LANE_INACTIVE_LINK_WINDOW_CHUNKS: u16 = 400;
+pub const RECOMMENDED_REORDER_SLOTS: u16 = 16;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TransferOptions {
     pub chunk_payload_bytes: u16,
@@ -54,6 +61,9 @@ pub struct TransferOptions {
     pub status_read_attempts: u8,
     pub max_stalled_windows: u8,
     pub inactive_link_window_chunks: Option<u16>,
+    /// When true (default), the engine alternates DATA / DATA_B writes if the
+    /// transport reports [`OtaV1Transport::dual_lane_available`].
+    pub prefer_dual_lane: bool,
 }
 
 impl TransferOptions {
@@ -74,6 +84,18 @@ impl TransferOptions {
             return Err("OTA inactive-link window must contain at least one chunk".to_string());
         }
         Ok(self)
+    }
+
+    /// Throughput-oriented defaults for dual-lane capable products.
+    pub fn dual_lane_bulk(chunk_payload_bytes: u16) -> Self {
+        Self {
+            chunk_payload_bytes,
+            window_chunks: RECOMMENDED_DUAL_LANE_WINDOW_CHUNKS,
+            status_read_attempts: 5,
+            max_stalled_windows: 3,
+            inactive_link_window_chunks: Some(RECOMMENDED_DUAL_LANE_INACTIVE_LINK_WINDOW_CHUNKS),
+            prefer_dual_lane: true,
+        }
     }
 }
 
@@ -217,6 +239,17 @@ pub trait OtaV1Transport {
     fn write_data(&mut self, packet: &[u8]) -> Result<(), String>;
     fn read_status(&mut self) -> Result<Vec<u8>, String>;
 
+    /// Optional second data characteristic for dual-lane WWR (GATT DATA_B).
+    /// Default: not available. When [`Self::dual_lane_available`] is true the
+    /// engine alternates [`Self::write_data`] / [`Self::write_data_b`].
+    fn dual_lane_available(&self) -> bool {
+        false
+    }
+
+    fn write_data_b(&mut self, packet: &[u8]) -> Result<(), String> {
+        self.write_data(packet)
+    }
+
     fn status_retry_wait(&mut self, _attempt: u8) {}
 
     fn write_finish(&mut self, packet: &[u8; CONTROL_BYTES]) -> Result<(), String> {
@@ -298,6 +331,8 @@ pub struct OtaTransferEngine<'a, T: OtaV1Transport, C: OtaClock> {
     clock: &'a mut C,
     options: TransferOptions,
     report: TransferReport,
+    /// Alternates DATA / DATA_B when dual-lane is active for this session.
+    next_data_lane_b: bool,
 }
 
 impl<'a, T: OtaV1Transport, C: OtaClock> OtaTransferEngine<'a, T, C> {
@@ -323,6 +358,7 @@ impl<'a, T: OtaV1Transport, C: OtaClock> OtaTransferEngine<'a, T, C> {
                 finish_confirmed: false,
                 timings: TransferTimings::default(),
             },
+            next_data_lane_b: false,
         })
     }
 
@@ -561,7 +597,16 @@ impl<'a, T: OtaV1Transport, C: OtaClock> OtaTransferEngine<'a, T, C> {
 
     fn timed_data_write(&mut self, packet: &[u8]) -> Result<(), String> {
         let started = self.clock.now();
-        let result = self.transport.write_data(packet);
+        let use_dual = self.options.prefer_dual_lane && self.transport.dual_lane_available();
+        let result = if use_dual && self.next_data_lane_b {
+            self.next_data_lane_b = false;
+            self.transport.write_data_b(packet)
+        } else {
+            if use_dual {
+                self.next_data_lane_b = true;
+            }
+            self.transport.write_data(packet)
+        };
         self.report.timings.data_write += self.clock.now().saturating_sub(started);
         result
     }
@@ -842,7 +887,69 @@ mod tests {
             status_read_attempts: 3,
             max_stalled_windows: 3,
             inactive_link_window_chunks: Some(1),
+            prefer_dual_lane: true,
         }
+    }
+
+    #[test]
+    fn dual_lane_bulk_options_match_recommended_windows() {
+        let options = TransferOptions::dual_lane_bulk(500);
+        assert_eq!(options.window_chunks, RECOMMENDED_DUAL_LANE_WINDOW_CHUNKS);
+        assert_eq!(
+            options.inactive_link_window_chunks,
+            Some(RECOMMENDED_DUAL_LANE_INACTIVE_LINK_WINDOW_CHUNKS)
+        );
+        assert!(options.prefer_dual_lane);
+        assert!(options.validate().is_ok());
+    }
+
+    #[test]
+    fn dual_lane_transport_alternates_write_data_and_data_b() {
+        struct DualMock {
+            inner: MockTransport,
+            a: usize,
+            b: usize,
+        }
+        impl OtaV1Transport for DualMock {
+            fn write_control(
+                &mut self,
+                packet: &[u8; CONTROL_BYTES],
+            ) -> Result<(), String> {
+                self.inner.write_control(packet)
+            }
+            fn write_data(&mut self, packet: &[u8]) -> Result<(), String> {
+                self.a += 1;
+                self.inner.write_data(packet)
+            }
+            fn write_data_b(&mut self, packet: &[u8]) -> Result<(), String> {
+                self.b += 1;
+                self.inner.write_data(packet)
+            }
+            fn dual_lane_available(&self) -> bool {
+                true
+            }
+            fn read_status(&mut self) -> Result<Vec<u8>, String> {
+                self.inner.read_status()
+            }
+            fn write_finish(
+                &mut self,
+                packet: &[u8; CONTROL_BYTES],
+            ) -> Result<(), String> {
+                self.inner.write_finish(packet)
+            }
+        }
+        let firmware = b"0123456789".to_vec();
+        let mut transport = DualMock {
+            inner: MockTransport::new(),
+            a: 0,
+            b: 0,
+        };
+        transport.inner.chunk_bytes = options().chunk_payload_bytes;
+        let report = transfer(&mut transport, &firmware, options(), |_, _| {}).unwrap();
+        assert_eq!(report.data_writes, 2);
+        assert_eq!(transport.a, 1);
+        assert_eq!(transport.b, 1);
+        assert_eq!(transport.inner.image, firmware);
     }
 
     #[test]

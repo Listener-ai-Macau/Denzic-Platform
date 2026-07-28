@@ -8,4 +8,5 @@ export const DENZIC_OTA_V1_STATUS_BYTES = 24 as const;
 export const DENZIC_OTA_V1_GATT_SERVICE_UUID = '1b55f597-f09c-4c7f-9529-adfa64983b06' as const;
 export const DENZIC_OTA_V1_GATT_CONTROL_UUID = '206c5e29-c64d-4392-8180-66463788533c' as const;
 export const DENZIC_OTA_V1_GATT_DATA_UUID = 'fbc4b0fb-6102-4bd1-abe4-e5e90a9a7e12' as const;
+export const DENZIC_OTA_V1_GATT_DATA_B_UUID = 'fbc4b0fb-6102-4bd1-abe4-e5e90a9a7e13' as const;
 export const DENZIC_OTA_V1_GATT_STATUS_UUID = 'e571544a-7c41-4650-b0d6-ccebfe1db489' as const;
