@@ -56,3 +56,21 @@ samples device facts and executes the returned decisions.
 
 `ota/host/rust/src/orchestration.rs` mirrors the same decisions for host
 tooling; keep the two in sync.
+
+## Dual-lane DATA / DATA_B
+
+Products that need Listener-class bulk OTA speed share one dual-lane contract:
+
+- Wire: optional second data characteristic `data_b_uuid` in `ota_v1.json`
+  (`GATT_DATA_B_UUID`). Same ATT write semantics as DATA (WWR preferred).
+- Device: register DATA_B to the same access path as DATA. Before calling
+  `denzic_ota_v1_handle_data`, route packets through
+  `denzic_ota_v1_handle_data_ordered` with a product-owned BSS slot array
+  (`denzic_ota_v1_reorder_*`). Clear reorder on BEGIN/reset.
+- Host: implement `OtaV1Transport::dual_lane_available` / `write_data_b` when
+  DATA_B is discovered. Prefer `TransferOptions::dual_lane_bulk(chunk)` (window
+  400) over historical tiny windows. The transfer engine alternates lanes.
+
+Listener ESP and Companion STM32WB adapters keep their flash/bootloader paths
+product-specific; only the dual-lane wire + reorder + host alternation is
+shared.
