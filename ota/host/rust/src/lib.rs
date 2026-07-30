@@ -60,6 +60,9 @@ pub struct TransferOptions {
     pub window_chunks: u16,
     pub status_read_attempts: u8,
     pub max_stalled_windows: u8,
+    /// Rolling deadline for device-confirmed byte progress during bulk transfer.
+    /// `None` preserves the legacy stalled-window policy.
+    pub progress_timeout: Option<Duration>,
     pub inactive_link_window_chunks: Option<u16>,
     /// When true (default), the engine alternates DATA / DATA_B writes if the
     /// transport reports [`OtaV1Transport::dual_lane_available`].
@@ -80,6 +83,9 @@ impl TransferOptions {
         if self.max_stalled_windows == 0 {
             return Err("OTA max_stalled_windows must be greater than zero".to_string());
         }
+        if self.progress_timeout == Some(Duration::ZERO) {
+            return Err("OTA progress timeout must be greater than zero".to_string());
+        }
         if self.inactive_link_window_chunks == Some(0) {
             return Err("OTA inactive-link window must contain at least one chunk".to_string());
         }
@@ -93,6 +99,7 @@ impl TransferOptions {
             window_chunks: RECOMMENDED_DUAL_LANE_WINDOW_CHUNKS,
             status_read_attempts: 5,
             max_stalled_windows: 3,
+            progress_timeout: None,
             inactive_link_window_chunks: Some(RECOMMENDED_DUAL_LANE_INACTIVE_LINK_WINDOW_CHUNKS),
             prefer_dual_lane: true,
         }
@@ -333,6 +340,9 @@ pub struct OtaTransferEngine<'a, T: OtaV1Transport, C: OtaClock> {
     report: TransferReport,
     /// Alternates DATA / DATA_B when dual-lane is active for this session.
     next_data_lane_b: bool,
+    progress_last_confirmed_at: Option<Duration>,
+    progress_confirmed_offset: usize,
+    progress_total: usize,
 }
 
 impl<'a, T: OtaV1Transport, C: OtaClock> OtaTransferEngine<'a, T, C> {
@@ -359,6 +369,9 @@ impl<'a, T: OtaV1Transport, C: OtaClock> OtaTransferEngine<'a, T, C> {
                 timings: TransferTimings::default(),
             },
             next_data_lane_b: false,
+            progress_last_confirmed_at: None,
+            progress_confirmed_offset: 0,
+            progress_total: 0,
         })
     }
 
@@ -457,6 +470,7 @@ impl<'a, T: OtaV1Transport, C: OtaClock> OtaTransferEngine<'a, T, C> {
         }
         let mut stalled_windows = 0u8;
         on_progress(confirmed_offset, firmware.len());
+        self.arm_progress_watchdog(confirmed_offset, firmware.len());
 
         while confirmed_offset < firmware.len() {
             let window_start = confirmed_offset;
@@ -467,9 +481,12 @@ impl<'a, T: OtaV1Transport, C: OtaClock> OtaTransferEngine<'a, T, C> {
                 }
                 let end = (send_offset + chunk_bytes as usize).min(firmware.len());
                 let packet = data_packet(send_offset as u32, &firmware[send_offset..end]);
-                self.timed_data_write(&packet)
-                    .map_err(|error| format!("OTA data write failed: {error}"))
-                    .map_err(|error| self.fail_abort(TransferPhase::DataWrite, error))?;
+                if let Err(error) = self.timed_data_write(&packet) {
+                    return Err(self.fail_bulk_transport(
+                        TransferPhase::DataWrite,
+                        format!("OTA data write failed: {error}"),
+                    ));
+                }
                 self.report.data_writes += 1;
                 send_offset = end;
             }
@@ -481,12 +498,15 @@ impl<'a, T: OtaV1Transport, C: OtaClock> OtaTransferEngine<'a, T, C> {
                 window_chunks,
                 image_crc32,
             );
-            self.timed_control_write(&sync)
-                .map_err(|error| format!("OTA sync failed: {error}"))
-                .map_err(|error| self.fail_abort(TransferPhase::Sync, error))?;
+            if let Err(error) = self.timed_control_write(&sync) {
+                return Err(self.fail_bulk_transport(
+                    TransferPhase::Sync,
+                    format!("OTA sync failed: {error}"),
+                ));
+            }
             let mut status = self
                 .read_status_with_retry()
-                .map_err(|error| self.fail_abort(TransferPhase::StatusRead, error))?;
+                .map_err(|error| self.fail_bulk_transport(TransferPhase::StatusRead, error))?;
             validate_receiving_status(status, expected_size)
                 .map_err(|error| self.fail_abort(TransferPhase::Device, error))?;
             let mut device_offset = status.bytes_written as usize;
@@ -542,9 +562,16 @@ impl<'a, T: OtaV1Transport, C: OtaClock> OtaTransferEngine<'a, T, C> {
                 }
             }
             confirmed_offset = device_offset;
+            self.note_confirmed_progress(confirmed_offset);
+            // A large window can legitimately spend longer than the watchdog
+            // inside device flash/SYNC. Judge stalling only after a successful
+            // status cycle has exposed the device-confirmed offset.
+            self.ensure_progress_watchdog()?;
             if confirmed_offset <= window_start {
                 stalled_windows = stalled_windows.saturating_add(1);
-                if stalled_windows >= self.options.max_stalled_windows {
+                if self.options.progress_timeout.is_none()
+                    && stalled_windows >= self.options.max_stalled_windows
+                {
                     return Err(self.fail_abort(
                         TransferPhase::Device,
                         format!("OTA transfer stalled at offset {confirmed_offset}"),
@@ -579,6 +606,49 @@ impl<'a, T: OtaV1Transport, C: OtaClock> OtaTransferEngine<'a, T, C> {
         let abort = control_packet(Operation::Abort, 0, 0, 0, 0);
         let _ = self.transport.write_control(&abort);
         TransferError::new(phase, message)
+    }
+
+    fn arm_progress_watchdog(&mut self, confirmed_offset: usize, total: usize) {
+        self.progress_confirmed_offset = confirmed_offset;
+        self.progress_total = total;
+        self.progress_last_confirmed_at = self.options.progress_timeout.map(|_| self.clock.now());
+    }
+
+    fn note_confirmed_progress(&mut self, confirmed_offset: usize) {
+        if confirmed_offset > self.progress_confirmed_offset {
+            self.progress_confirmed_offset = confirmed_offset;
+            self.progress_last_confirmed_at =
+                self.options.progress_timeout.map(|_| self.clock.now());
+        }
+    }
+
+    fn progress_watchdog_message(&mut self) -> Option<String> {
+        let timeout = self.options.progress_timeout?;
+        let last_confirmed_at = self.progress_last_confirmed_at?;
+        let elapsed = self.clock.now().saturating_sub(last_confirmed_at);
+        (elapsed >= timeout).then(|| {
+            format!(
+                "OTA transfer progress stalled for {} ms at offset {}/{}",
+                timeout.as_millis(),
+                self.progress_confirmed_offset,
+                self.progress_total
+            )
+        })
+    }
+
+    fn ensure_progress_watchdog(&mut self) -> Result<(), TransferError> {
+        if let Some(message) = self.progress_watchdog_message() {
+            return Err(self.fail_abort(TransferPhase::Device, message));
+        }
+        Ok(())
+    }
+
+    fn fail_bulk_transport(
+        &mut self,
+        phase: TransferPhase,
+        message: impl Into<String>,
+    ) -> TransferError {
+        self.fail_abort(phase, message)
     }
 
     fn timed_connect(&mut self) -> Result<(), String> {
@@ -740,6 +810,7 @@ mod tests {
         writes: u32,
         transient_status_failures: u8,
         drop_first_data: bool,
+        freeze_after_bytes: Option<usize>,
         dropped: bool,
         aborted: bool,
         finished: bool,
@@ -761,6 +832,7 @@ mod tests {
                 writes: 0,
                 transient_status_failures: 0,
                 drop_first_data: false,
+                freeze_after_bytes: None,
                 dropped: false,
                 aborted: false,
                 finished: false,
@@ -827,6 +899,12 @@ mod tests {
                 self.dropped = true;
                 return Ok(());
             }
+            if self
+                .freeze_after_bytes
+                .is_some_and(|limit| self.image.len() >= limit)
+            {
+                return Ok(());
+            }
             if offset != self.image.len() {
                 self.error = ERROR_OFFSET_MISMATCH;
                 return Ok(());
@@ -886,6 +964,7 @@ mod tests {
             window_chunks: 3,
             status_read_attempts: 3,
             max_stalled_windows: 3,
+            progress_timeout: None,
             inactive_link_window_chunks: Some(1),
             prefer_dual_lane: true,
         }
@@ -911,10 +990,7 @@ mod tests {
             b: usize,
         }
         impl OtaV1Transport for DualMock {
-            fn write_control(
-                &mut self,
-                packet: &[u8; CONTROL_BYTES],
-            ) -> Result<(), String> {
+            fn write_control(&mut self, packet: &[u8; CONTROL_BYTES]) -> Result<(), String> {
                 self.inner.write_control(packet)
             }
             fn write_data(&mut self, packet: &[u8]) -> Result<(), String> {
@@ -931,10 +1007,7 @@ mod tests {
             fn read_status(&mut self) -> Result<Vec<u8>, String> {
                 self.inner.read_status()
             }
-            fn write_finish(
-                &mut self,
-                packet: &[u8; CONTROL_BYTES],
-            ) -> Result<(), String> {
+            fn write_finish(&mut self, packet: &[u8; CONTROL_BYTES]) -> Result<(), String> {
                 self.inner.write_finish(packet)
             }
         }
@@ -1012,6 +1085,109 @@ mod tests {
         assert_eq!(transport.image, firmware);
         assert!(transport.finished);
         assert!(report.recovered_offsets >= 1);
+    }
+
+    #[test]
+    fn rolling_progress_timeout_aborts_after_partial_transfer_stalls() {
+        let firmware: Vec<u8> = (0..40).collect();
+        let mut transport = MockTransport::new();
+        transport.freeze_after_bytes = Some(5);
+        let mut configured = options();
+        configured.window_chunks = 1;
+        configured.progress_timeout = Some(Duration::from_millis(500));
+        let mut clock = FakeClock::new(Duration::from_millis(20));
+
+        let error =
+            transfer_with_clock(&mut transport, &firmware, configured, &mut clock, |_, _| {})
+                .unwrap_err();
+
+        assert_eq!(error.phase, TransferPhase::Device);
+        assert!(
+            error
+                .message
+                .contains("OTA transfer progress stalled for 500 ms at offset 5/40"),
+            "{}",
+            error.message
+        );
+        assert!(transport.aborted);
+        assert_eq!(transport.image.len(), 5);
+    }
+
+    #[test]
+    fn rolling_progress_timeout_resets_when_confirmed_offset_advances() {
+        let firmware: Vec<u8> = (0..100).collect();
+        let mut transport = MockTransport::new();
+        let mut configured = options();
+        configured.window_chunks = 1;
+        configured.progress_timeout = Some(Duration::from_millis(500));
+        let timeout = configured.progress_timeout.unwrap();
+        let mut clock = FakeClock::new(Duration::from_millis(20));
+
+        let report =
+            transfer_with_clock(&mut transport, &firmware, configured, &mut clock, |_, _| {})
+                .unwrap();
+
+        assert_eq!(transport.image, firmware);
+        assert!(
+            report.timings.total > timeout,
+            "the total transfer may exceed the rolling timeout while each window advances"
+        );
+    }
+
+    #[test]
+    fn rolling_progress_timeout_allows_one_opaque_sync_longer_than_the_timeout() {
+        use std::{cell::Cell, rc::Rc};
+
+        struct SharedClock(Rc<Cell<Duration>>);
+        impl OtaClock for SharedClock {
+            fn now(&mut self) -> Duration {
+                self.0.get()
+            }
+        }
+
+        struct SlowSyncTransport {
+            inner: MockTransport,
+            now: Rc<Cell<Duration>>,
+        }
+        impl OtaV1Transport for SlowSyncTransport {
+            fn write_control(&mut self, packet: &[u8; CONTROL_BYTES]) -> Result<(), String> {
+                if packet[4] == OP_SYNC {
+                    self.now.set(self.now.get() + Duration::from_secs(12));
+                }
+                self.inner.write_control(packet)
+            }
+
+            fn write_data(&mut self, packet: &[u8]) -> Result<(), String> {
+                self.inner.write_data(packet)
+            }
+
+            fn read_status(&mut self) -> Result<Vec<u8>, String> {
+                self.inner.read_status()
+            }
+
+            fn write_finish(&mut self, packet: &[u8; CONTROL_BYTES]) -> Result<(), String> {
+                self.inner.write_finish(packet)
+            }
+        }
+
+        let now = Rc::new(Cell::new(Duration::ZERO));
+        let mut clock = SharedClock(Rc::clone(&now));
+        let mut transport = SlowSyncTransport {
+            inner: MockTransport::new(),
+            now,
+        };
+        let firmware: Vec<u8> = (0..20).collect();
+        let mut configured = options();
+        configured.window_chunks = 1;
+        configured.progress_timeout = Some(Duration::from_secs(10));
+
+        let report =
+            transfer_with_clock(&mut transport, &firmware, configured, &mut clock, |_, _| {})
+                .unwrap();
+
+        assert_eq!(transport.inner.image, firmware);
+        assert!(report.timings.total > Duration::from_secs(10));
+        assert!(!transport.inner.aborted);
     }
 
     #[test]

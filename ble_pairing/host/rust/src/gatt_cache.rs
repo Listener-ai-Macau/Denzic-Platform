@@ -75,10 +75,10 @@ pub const DEVICE_NOTIFY_CACHE_POLICY: GattCachePolicy = GattCachePolicy::Uncache
 /// uncached query (for example during link rehydration).
 pub const PERSISTED_BOND_NOTIFY_CACHE_POLICY: GattCachePolicy = GattCachePolicy::CachedFirst;
 
-/// Notify-target reopen after a confirmed image handoff that retains its
-/// GATT schema: rehydrate the cache first, keep an uncached fallback for a
-/// Service Changed/schema transition.
-pub const POST_CONFIRM_NOTIFY_CACHE_POLICY: GattCachePolicy = GattCachePolicy::CachedFirst;
+/// Notify-target reopen after a confirmed image handoff. The schema is stable,
+/// but the pre-reboot characteristic handles are not; discover the live peer
+/// first and retain cached discovery only as a fallback.
+pub const POST_CONFIRM_NOTIFY_CACHE_POLICY: GattCachePolicy = GattCachePolicy::UncachedFirst;
 
 /// Fast reachability probe of an already-known service.
 pub const SERVICE_REACHABILITY_PROBE_CACHE_POLICY: GattCachePolicy = GattCachePolicy::CachedFirst;
@@ -182,7 +182,7 @@ mod tests {
         );
         assert_eq!(
             POST_CONFIRM_NOTIFY_CACHE_POLICY,
-            GattCachePolicy::CachedFirst
+            GattCachePolicy::UncachedFirst
         );
         assert_eq!(
             SERVICE_REACHABILITY_PROBE_CACHE_POLICY,
