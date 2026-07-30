@@ -31,6 +31,11 @@ state errors as `host`; model failures as `provider`; connectivity failures as
 `network`; schema mismatches as `protocol`; and exhaustion/time-budget failures
 as `resource`.
 
+Host adapters assess measured durations with `PerformanceBudget` and
+`assess_duration_ms`. Products inject target and ceiling values; the platform
+owns inclusive pass/fail and overrun arithmetic so logs and release gates use
+the same semantics.
+
 ## Adapter Targets
 
 - Firmware includes `observability/embedded/c/include/denzic_observability_v1_generated.h`.

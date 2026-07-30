@@ -27,6 +27,8 @@ the platform and what product adapters must inject.
   (protocol section 9): the cached/uncached attempt sequence per session
   scenario. The table is host-only; the C end carries just the generated
   policy codes.
+- `host/rust/src/lib.rs` also routes sampled host recovery evidence to ready,
+  retry, automatic pairing, or terminal failure. It does not call an OS API.
 - Generated constants on both ends from `ble_pairing_v1.json`
   (`denzic_ble_pairing_v1_generated.h`, `generated.rs`).
 
@@ -55,6 +57,8 @@ allocates, logs, or touches an OS, timer, or BLE-stack API.
   cache-mode API, running the attempts a policy lists, session open/close,
   retry cadences, pairing prompt UI, PnP/registry cleanup, and poll cadences.
   The platform picks the policy per scenario; the adapter executes it.
+- Host discovery and pairing evidence: advertisement scans, persisted target
+  lookup, PairAsync execution, retry budgets, and rendered errors.
 
 ## Wiring
 

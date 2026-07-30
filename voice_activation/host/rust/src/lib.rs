@@ -2,6 +2,8 @@
 
 mod generated;
 
+use pinyin::ToPinyin;
+
 pub use generated::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +70,177 @@ pub fn decide_gate(input: GateInput) -> GateDecision {
         GateDecision::Reject
     } else {
         GateDecision::Pending
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalPhraseRelation {
+    ExactStart,
+    PhoneticStart,
+    PresentLater,
+    Absent,
+}
+
+fn normalized_phrase_text(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn phonetic_phrase_units(value: &str) -> Vec<String> {
+    normalized_phrase_text(value)
+        .chars()
+        .map(|ch| {
+            ch.to_pinyin()
+                .map(|value| value.plain().to_string())
+                .unwrap_or_else(|| ch.to_lowercase().collect())
+        })
+        .collect()
+}
+
+pub fn local_transcript_phrase_relation(transcript: &str, phrase: &str) -> LocalPhraseRelation {
+    let phrase = normalized_phrase_text(phrase);
+    if phrase.is_empty() {
+        return LocalPhraseRelation::Absent;
+    }
+    let transcript = normalized_phrase_text(transcript);
+    if transcript.starts_with(&phrase) {
+        LocalPhraseRelation::ExactStart
+    } else {
+        let phrase_units = phonetic_phrase_units(&phrase);
+        let transcript_units = phonetic_phrase_units(&transcript);
+        if transcript_units.len() >= phrase_units.len()
+            && transcript_units[..phrase_units.len()] == phrase_units
+        {
+            LocalPhraseRelation::PhoneticStart
+        } else if transcript.contains(&phrase) {
+            LocalPhraseRelation::PresentLater
+        } else {
+            LocalPhraseRelation::Absent
+        }
+    }
+}
+
+pub fn local_transcript_matches_phrase(transcript: &str, phrase: &str) -> bool {
+    matches!(
+        local_transcript_phrase_relation(transcript, phrase),
+        LocalPhraseRelation::ExactStart | LocalPhraseRelation::PhoneticStart
+    )
+}
+
+pub const fn confirmation_snapshot_ms(attempt: usize, snapshots_ms: &[usize]) -> Option<usize> {
+    if attempt < snapshots_ms.len() {
+        Some(snapshots_ms[attempt])
+    } else {
+        None
+    }
+}
+
+pub fn pcm_offset_after_activation(
+    end_seconds: f32,
+    pad_seconds: f32,
+    bytes_per_second: usize,
+    pcm_len: usize,
+    alignment: usize,
+) -> usize {
+    if !end_seconds.is_finite() || end_seconds <= 0.0 || pcm_len < alignment || alignment == 0 {
+        return 0;
+    }
+    let offset = ((end_seconds + pad_seconds) * bytes_per_second as f32) as usize;
+    let bounded = offset.min(pcm_len);
+    bounded - bounded % alignment
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LocalConfirmationBoundaryInput {
+    pub keyword_end_seconds: f32,
+    pub recovered_keyword_end_seconds: Option<f32>,
+    pub phrase_relation: LocalPhraseRelation,
+    pub transcript_chars: usize,
+    pub phrase_chars: usize,
+    pub snapshot_pcm_ms: usize,
+    pub end_pad_seconds: f32,
+    pub local_endpoint_max_seconds: f32,
+}
+
+pub fn refined_local_wake_end_seconds(input: LocalConfirmationBoundaryInput) -> f32 {
+    let model_boundary = input
+        .recovered_keyword_end_seconds
+        .filter(|seconds| {
+            seconds.is_finite() && *seconds > 0.0 && *seconds <= input.local_endpoint_max_seconds
+        })
+        .unwrap_or_default();
+    let detected_boundary = input.keyword_end_seconds.max(model_boundary);
+    let start_aligned = matches!(
+        input.phrase_relation,
+        LocalPhraseRelation::ExactStart | LocalPhraseRelation::PhoneticStart
+    );
+    let exact_phrase_only = start_aligned && input.transcript_chars <= input.phrase_chars;
+    if !exact_phrase_only {
+        if detected_boundary > 0.0 {
+            return detected_boundary;
+        }
+        if !start_aligned || input.phrase_chars == 0 || input.transcript_chars <= input.phrase_chars
+        {
+            return 0.0;
+        }
+        let snapshot_seconds = input.snapshot_pcm_ms as f32 / 1_000.0;
+        let proportional =
+            snapshot_seconds * input.phrase_chars as f32 / input.transcript_chars as f32;
+        return proportional
+            .clamp(0.55, input.local_endpoint_max_seconds)
+            .min((snapshot_seconds - input.end_pad_seconds).max(0.0));
+    }
+    let local_phrase_end = input.snapshot_pcm_ms as f32 / 1_000.0 - input.end_pad_seconds;
+    detected_boundary.max(local_phrase_end.max(0.0))
+}
+
+pub const fn local_confirmation_can_activate(
+    has_keyword_model_hit: bool,
+    relation: LocalPhraseRelation,
+) -> bool {
+    if has_keyword_model_hit {
+        matches!(
+            relation,
+            LocalPhraseRelation::ExactStart
+                | LocalPhraseRelation::PhoneticStart
+                | LocalPhraseRelation::PresentLater
+        )
+    } else {
+        matches!(
+            relation,
+            LocalPhraseRelation::ExactStart | LocalPhraseRelation::PhoneticStart
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SecondaryFallbackInput {
+    pub keyword_model_hit: bool,
+    pub explicit_absent_count: u8,
+    pub secondary_unavailable_or_timed_out: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SecondaryFallbackDecision {
+    HoldForConfirmation,
+    AcceptKeywordModel,
+}
+
+/// Decide whether a high-recall keyword hit may bypass an unavailable
+/// precision verifier. Any explicit absence is authoritative and prevents a
+/// later timeout or helper failure from reversing that evidence.
+pub const fn decide_secondary_fallback(input: SecondaryFallbackInput) -> SecondaryFallbackDecision {
+    if input.keyword_model_hit
+        && input.secondary_unavailable_or_timed_out
+        && input.explicit_absent_count == 0
+    {
+        SecondaryFallbackDecision::AcceptKeywordModel
+    } else {
+        SecondaryFallbackDecision::HoldForConfirmation
     }
 }
 
@@ -353,5 +526,117 @@ mod tests {
             }),
             GateDecision::Reject
         );
+    }
+
+    #[test]
+    fn secondary_fallback_accepts_only_before_explicit_absence() {
+        assert_eq!(
+            decide_secondary_fallback(SecondaryFallbackInput {
+                keyword_model_hit: true,
+                explicit_absent_count: 0,
+                secondary_unavailable_or_timed_out: true,
+            }),
+            SecondaryFallbackDecision::AcceptKeywordModel
+        );
+        assert_eq!(
+            decide_secondary_fallback(SecondaryFallbackInput {
+                keyword_model_hit: true,
+                explicit_absent_count: 1,
+                secondary_unavailable_or_timed_out: true,
+            }),
+            SecondaryFallbackDecision::HoldForConfirmation
+        );
+    }
+
+    #[test]
+    fn secondary_fallback_does_not_accept_without_failure_or_keyword_hit() {
+        for input in [
+            SecondaryFallbackInput {
+                keyword_model_hit: false,
+                explicit_absent_count: 0,
+                secondary_unavailable_or_timed_out: true,
+            },
+            SecondaryFallbackInput {
+                keyword_model_hit: true,
+                explicit_absent_count: 0,
+                secondary_unavailable_or_timed_out: false,
+            },
+        ] {
+            assert_eq!(
+                decide_secondary_fallback(input),
+                SecondaryFallbackDecision::HoldForConfirmation
+            );
+        }
+    }
+
+    #[test]
+    fn transcript_relation_requires_a_start_aligned_phrase_for_direct_match() {
+        assert_eq!(
+            local_transcript_phrase_relation("开始录音，今天测试。", "开始录音"),
+            LocalPhraseRelation::ExactStart
+        );
+        assert_eq!(
+            local_transcript_phrase_relation("开使录因，今天测试", "开始录音"),
+            LocalPhraseRelation::PhoneticStart
+        );
+        assert_eq!(
+            local_transcript_phrase_relation("请说开始录音", "开始录音"),
+            LocalPhraseRelation::PresentLater
+        );
+        assert_eq!(
+            local_transcript_phrase_relation("普通说话", "开始录音"),
+            LocalPhraseRelation::Absent
+        );
+        assert!(local_transcript_matches_phrase(
+            "开始录音，今天测试。",
+            "开始录音"
+        ));
+        assert!(!local_transcript_matches_phrase("请说开始录音", "开始录音"));
+    }
+
+    #[test]
+    fn confirmation_schedule_and_pcm_boundary_are_product_configured() {
+        assert_eq!(
+            confirmation_snapshot_ms(1, &[1_000, 1_400, 1_800]),
+            Some(1_400)
+        );
+        assert_eq!(confirmation_snapshot_ms(3, &[1_000, 1_400, 1_800]), None);
+        assert_eq!(
+            pcm_offset_after_activation(1.0, 0.12, 32_000, 40_001, 2),
+            35_840
+        );
+    }
+
+    #[test]
+    fn local_wake_boundary_preserves_start_and_body_rules() {
+        let phrase_only = LocalConfirmationBoundaryInput {
+            keyword_end_seconds: 0.685,
+            recovered_keyword_end_seconds: None,
+            phrase_relation: LocalPhraseRelation::ExactStart,
+            transcript_chars: 4,
+            phrase_chars: 4,
+            snapshot_pcm_ms: 1_800,
+            end_pad_seconds: 0.12,
+            local_endpoint_max_seconds: 1.20,
+        };
+        assert!((refined_local_wake_end_seconds(phrase_only) - 1.68).abs() < 0.001);
+        assert_eq!(
+            refined_local_wake_end_seconds(LocalConfirmationBoundaryInput {
+                keyword_end_seconds: 0.0,
+                recovered_keyword_end_seconds: None,
+                phrase_relation: LocalPhraseRelation::PresentLater,
+                transcript_chars: 9,
+                ..phrase_only
+            }),
+            0.0
+        );
+        assert!(local_confirmation_can_activate(
+            true,
+            LocalPhraseRelation::PresentLater
+        ));
+        assert!(!local_confirmation_can_activate(
+            false,
+            LocalPhraseRelation::PresentLater
+        ));
     }
 }

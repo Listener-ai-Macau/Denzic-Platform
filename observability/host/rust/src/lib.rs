@@ -9,6 +9,32 @@ pub use generated::*;
 
 static NEXT_HOST_CORRELATION_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PerformanceBudget {
+    pub target_ms: u64,
+    pub ceiling_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PerformanceAssessment {
+    pub target_pass: bool,
+    pub ceiling_pass: bool,
+    pub target_overrun_ms: u64,
+    pub ceiling_overrun_ms: u64,
+}
+
+pub const fn assess_duration_ms(
+    duration_ms: u64,
+    budget: PerformanceBudget,
+) -> PerformanceAssessment {
+    PerformanceAssessment {
+        target_pass: duration_ms <= budget.target_ms,
+        ceiling_pass: duration_ms <= budget.ceiling_ms,
+        target_overrun_ms: duration_ms.saturating_sub(budget.target_ms),
+        ceiling_overrun_ms: duration_ms.saturating_sub(budget.ceiling_ms),
+    }
+}
+
 /// Creates a non-zero opaque ID for host-originated work.
 ///
 /// The ID combines a wall-clock observation, process identity, and a
@@ -193,5 +219,23 @@ mod tests {
                 expected: 2 * DIAG_LOG_EVENT_WIRE_BYTES,
             })
         );
+    }
+
+    #[test]
+    fn performance_budget_distinguishes_target_and_ceiling() {
+        let budget = PerformanceBudget {
+            target_ms: 1_200,
+            ceiling_ms: 1_500,
+        };
+        assert_eq!(
+            assess_duration_ms(1_350, budget),
+            PerformanceAssessment {
+                target_pass: false,
+                ceiling_pass: true,
+                target_overrun_ms: 150,
+                ceiling_overrun_ms: 0,
+            }
+        );
+        assert!(!assess_duration_ms(1_501, budget).ceiling_pass);
     }
 }

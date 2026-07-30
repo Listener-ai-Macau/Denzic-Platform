@@ -15,6 +15,36 @@ pub use gatt_cache::*;
 pub use generated::*;
 pub use orchestration::*;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HostRecoveryInput {
+    pub link_ready: bool,
+    pub pairing_present: bool,
+    pub recovery_advertisement_visible: bool,
+    pub retry_budget_remaining: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostRecoveryAction {
+    Ready,
+    Retry,
+    RequestAutomaticPair,
+    Fail,
+}
+
+/// Route host recovery from sampled OS evidence. The adapter performs scans,
+/// PairAsync, retries, and user-facing error rendering.
+pub const fn decide_host_recovery(input: HostRecoveryInput) -> HostRecoveryAction {
+    if input.link_ready {
+        HostRecoveryAction::Ready
+    } else if !input.pairing_present && input.recovery_advertisement_visible {
+        HostRecoveryAction::RequestAutomaticPair
+    } else if input.retry_budget_remaining {
+        HostRecoveryAction::Retry
+    } else {
+        HostRecoveryAction::Fail
+    }
+}
+
 /// Disconnect classification (protocol section 1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisconnectClassification {
@@ -495,6 +525,28 @@ mod tests {
         assert_eq!(
             security_failure_action(false),
             SecurityFailureAction::OpenRepairWindow
+        );
+    }
+
+    #[test]
+    fn host_recovery_routes_missing_pairing_before_transport_retry() {
+        assert_eq!(
+            decide_host_recovery(HostRecoveryInput {
+                link_ready: false,
+                pairing_present: false,
+                recovery_advertisement_visible: true,
+                retry_budget_remaining: true,
+            }),
+            HostRecoveryAction::RequestAutomaticPair
+        );
+        assert_eq!(
+            decide_host_recovery(HostRecoveryInput {
+                link_ready: false,
+                pairing_present: true,
+                recovery_advertisement_visible: false,
+                retry_budget_remaining: true,
+            }),
+            HostRecoveryAction::Retry
         );
     }
 }
