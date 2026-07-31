@@ -201,6 +201,12 @@ void denzic_audio_leveling_v1_stats_observe(
     stats->raw_histogram[level_bin(input.raw_mean_abs)]++;
     stats->post_agc_histogram[level_bin(input.post_agc_mean_abs)]++;
     stats->effective_gain_histogram[gain_bin(output.effective_gain_permille)]++;
+    if (input.speech_detected) {
+        stats->voiced_raw_histogram[level_bin(input.raw_mean_abs)]++;
+        stats->voiced_post_agc_histogram[level_bin(input.post_agc_mean_abs)]++;
+        stats->voiced_effective_gain_histogram[
+            gain_bin(output.effective_gain_permille)]++;
+    }
 }
 
 static uint32_t histogram_percentile(
@@ -252,5 +258,14 @@ denzic_audio_leveling_v1_stats_summary_t denzic_audio_leveling_v1_stats_summariz
     summary.effective_gain_permille_p10 = histogram_percentile(stats->effective_gain_histogram, stats->frames, 10u, true);
     summary.effective_gain_permille_p50 = histogram_percentile(stats->effective_gain_histogram, stats->frames, 50u, true);
     summary.effective_gain_permille_p90 = histogram_percentile(stats->effective_gain_histogram, stats->frames, 90u, true);
+    summary.voiced_raw_mean_abs_p10 = histogram_percentile(stats->voiced_raw_histogram, stats->voiced_frames, 10u, false);
+    summary.voiced_raw_mean_abs_p50 = histogram_percentile(stats->voiced_raw_histogram, stats->voiced_frames, 50u, false);
+    summary.voiced_raw_mean_abs_p90 = histogram_percentile(stats->voiced_raw_histogram, stats->voiced_frames, 90u, false);
+    summary.voiced_post_agc_mean_abs_p10 = histogram_percentile(stats->voiced_post_agc_histogram, stats->voiced_frames, 10u, false);
+    summary.voiced_post_agc_mean_abs_p50 = histogram_percentile(stats->voiced_post_agc_histogram, stats->voiced_frames, 50u, false);
+    summary.voiced_post_agc_mean_abs_p90 = histogram_percentile(stats->voiced_post_agc_histogram, stats->voiced_frames, 90u, false);
+    summary.voiced_effective_gain_permille_p10 = histogram_percentile(stats->voiced_effective_gain_histogram, stats->voiced_frames, 10u, true);
+    summary.voiced_effective_gain_permille_p50 = histogram_percentile(stats->voiced_effective_gain_histogram, stats->voiced_frames, 50u, true);
+    summary.voiced_effective_gain_permille_p90 = histogram_percentile(stats->voiced_effective_gain_histogram, stats->voiced_frames, 90u, true);
     return summary;
 }

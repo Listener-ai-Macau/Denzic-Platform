@@ -64,6 +64,9 @@ int main(void)
     assert(summary.raw_mean_abs_p50 >= 16u);
     assert(summary.post_agc_mean_abs_p50 >= 256u);
     assert(summary.effective_gain_permille_p50 >= 16000u);
+    assert(summary.voiced_raw_mean_abs_p50 >= 16u);
+    assert(summary.voiced_post_agc_mean_abs_p50 >= 256u);
+    assert(summary.voiced_effective_gain_permille_p50 >= 16000u);
 
     puts("audio leveling v1 tests passed");
     return 0;

@@ -58,6 +58,9 @@ typedef struct {
     uint32_t raw_histogram[DENZIC_AUDIO_LEVELING_V1_HISTOGRAM_BINS];
     uint32_t post_agc_histogram[DENZIC_AUDIO_LEVELING_V1_HISTOGRAM_BINS];
     uint32_t effective_gain_histogram[DENZIC_AUDIO_LEVELING_V1_HISTOGRAM_BINS];
+    uint32_t voiced_raw_histogram[DENZIC_AUDIO_LEVELING_V1_HISTOGRAM_BINS];
+    uint32_t voiced_post_agc_histogram[DENZIC_AUDIO_LEVELING_V1_HISTOGRAM_BINS];
+    uint32_t voiced_effective_gain_histogram[DENZIC_AUDIO_LEVELING_V1_HISTOGRAM_BINS];
 } denzic_audio_leveling_v1_stats_t;
 
 typedef struct {
@@ -76,6 +79,15 @@ typedef struct {
     uint32_t effective_gain_permille_p10;
     uint32_t effective_gain_permille_p50;
     uint32_t effective_gain_permille_p90;
+    uint32_t voiced_raw_mean_abs_p10;
+    uint32_t voiced_raw_mean_abs_p50;
+    uint32_t voiced_raw_mean_abs_p90;
+    uint32_t voiced_post_agc_mean_abs_p10;
+    uint32_t voiced_post_agc_mean_abs_p50;
+    uint32_t voiced_post_agc_mean_abs_p90;
+    uint32_t voiced_effective_gain_permille_p10;
+    uint32_t voiced_effective_gain_permille_p50;
+    uint32_t voiced_effective_gain_permille_p90;
 } denzic_audio_leveling_v1_stats_summary_t;
 
 denzic_audio_leveling_v1_config_t denzic_audio_leveling_v1_default_config(void);

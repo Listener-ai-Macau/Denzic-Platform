@@ -180,6 +180,9 @@ pub struct PairedLevelStats {
     raw_mean_abs: Vec<u32>,
     post_agc_mean_abs: Vec<u32>,
     effective_gain_permille: Vec<u32>,
+    voiced_raw_mean_abs: Vec<u32>,
+    voiced_post_agc_mean_abs: Vec<u32>,
+    voiced_effective_gain_permille: Vec<u32>,
     voiced_frames: u32,
     gain_limited_frames: u32,
     gain_ceiling_frames: u32,
@@ -204,6 +207,15 @@ pub struct PairedLevelSummary {
     pub effective_gain_permille_p10: u32,
     pub effective_gain_permille_p50: u32,
     pub effective_gain_permille_p90: u32,
+    pub voiced_raw_mean_abs_p10: u32,
+    pub voiced_raw_mean_abs_p50: u32,
+    pub voiced_raw_mean_abs_p90: u32,
+    pub voiced_post_agc_mean_abs_p10: u32,
+    pub voiced_post_agc_mean_abs_p50: u32,
+    pub voiced_post_agc_mean_abs_p90: u32,
+    pub voiced_effective_gain_permille_p10: u32,
+    pub voiced_effective_gain_permille_p50: u32,
+    pub voiced_effective_gain_permille_p90: u32,
 }
 
 impl PairedLevelStats {
@@ -213,6 +225,14 @@ impl PairedLevelStats {
             .push(observation.input.post_agc_mean_abs);
         self.effective_gain_permille
             .push(observation.output.effective_gain_permille);
+        if observation.input.speech_detected {
+            self.voiced_raw_mean_abs
+                .push(observation.input.raw_mean_abs);
+            self.voiced_post_agc_mean_abs
+                .push(observation.input.post_agc_mean_abs);
+            self.voiced_effective_gain_permille
+                .push(observation.output.effective_gain_permille);
+        }
         self.voiced_frames += u32::from(observation.input.speech_detected);
         self.gain_limited_frames += u32::from(observation.output.gain_limited);
         self.gain_ceiling_frames += u32::from(
@@ -239,6 +259,24 @@ impl PairedLevelStats {
             effective_gain_permille_p10: percentile(&self.effective_gain_permille, 10),
             effective_gain_permille_p50: percentile(&self.effective_gain_permille, 50),
             effective_gain_permille_p90: percentile(&self.effective_gain_permille, 90),
+            voiced_raw_mean_abs_p10: percentile(&self.voiced_raw_mean_abs, 10),
+            voiced_raw_mean_abs_p50: percentile(&self.voiced_raw_mean_abs, 50),
+            voiced_raw_mean_abs_p90: percentile(&self.voiced_raw_mean_abs, 90),
+            voiced_post_agc_mean_abs_p10: percentile(&self.voiced_post_agc_mean_abs, 10),
+            voiced_post_agc_mean_abs_p50: percentile(&self.voiced_post_agc_mean_abs, 50),
+            voiced_post_agc_mean_abs_p90: percentile(&self.voiced_post_agc_mean_abs, 90),
+            voiced_effective_gain_permille_p10: percentile(
+                &self.voiced_effective_gain_permille,
+                10,
+            ),
+            voiced_effective_gain_permille_p50: percentile(
+                &self.voiced_effective_gain_permille,
+                50,
+            ),
+            voiced_effective_gain_permille_p90: percentile(
+                &self.voiced_effective_gain_permille,
+                90,
+            ),
         }
     }
 }
@@ -312,6 +350,10 @@ mod tests {
         assert_eq!(summary.voiced_frames, 2);
         assert_eq!(summary.raw_mean_abs_p50, 16);
         assert_eq!(summary.post_agc_mean_abs_p90, 320);
+        assert_eq!(summary.voiced_raw_mean_abs_p10, 16);
+        assert_eq!(summary.voiced_raw_mean_abs_p90, 32);
+        assert_eq!(summary.voiced_post_agc_mean_abs_p50, 240);
+        assert_eq!(summary.voiced_effective_gain_permille_p90, 15_000);
         assert_eq!(summary.clipped_samples, 0);
     }
 }
