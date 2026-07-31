@@ -230,6 +230,40 @@ pub enum SecondaryFallbackDecision {
     AcceptKeywordModel,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompletedSecondaryInput {
+    pub relation: LocalPhraseRelation,
+    pub transcript_chars: usize,
+    pub phrase_chars: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompletedSecondaryDecision {
+    AcceptLocalTranscript,
+    RejectExplicitAbsent,
+    HoldForMoreEvidence,
+}
+
+/// Consume a completed precision-verifier result before an adapter considers
+/// timeout fallback. A full-length contradictory transcript is authoritative;
+/// a short partial transcript is held because the primary detector can fire
+/// before the speaker finishes the configured phrase.
+pub const fn decide_completed_secondary(
+    input: CompletedSecondaryInput,
+) -> CompletedSecondaryDecision {
+    match input.relation {
+        LocalPhraseRelation::ExactStart
+        | LocalPhraseRelation::PhoneticStart
+        | LocalPhraseRelation::PresentLater => CompletedSecondaryDecision::AcceptLocalTranscript,
+        LocalPhraseRelation::Absent
+            if input.phrase_chars > 0 && input.transcript_chars >= input.phrase_chars =>
+        {
+            CompletedSecondaryDecision::RejectExplicitAbsent
+        }
+        LocalPhraseRelation::Absent => CompletedSecondaryDecision::HoldForMoreEvidence,
+    }
+}
+
 /// Decide whether a high-recall keyword hit may bypass an unavailable
 /// precision verifier. Any explicit absence is authoritative and prevents a
 /// later timeout or helper failure from reversing that evidence.
@@ -567,6 +601,34 @@ mod tests {
                 SecondaryFallbackDecision::HoldForConfirmation
             );
         }
+    }
+
+    #[test]
+    fn completed_secondary_rejects_full_length_absent_but_holds_partial_speech() {
+        assert_eq!(
+            decide_completed_secondary(CompletedSecondaryInput {
+                relation: LocalPhraseRelation::Absent,
+                transcript_chars: 4,
+                phrase_chars: 4,
+            }),
+            CompletedSecondaryDecision::RejectExplicitAbsent
+        );
+        assert_eq!(
+            decide_completed_secondary(CompletedSecondaryInput {
+                relation: LocalPhraseRelation::Absent,
+                transcript_chars: 3,
+                phrase_chars: 4,
+            }),
+            CompletedSecondaryDecision::HoldForMoreEvidence
+        );
+        assert_eq!(
+            decide_completed_secondary(CompletedSecondaryInput {
+                relation: LocalPhraseRelation::ExactStart,
+                transcript_chars: 4,
+                phrase_chars: 4,
+            }),
+            CompletedSecondaryDecision::AcceptLocalTranscript
+        );
     }
 
     #[test]

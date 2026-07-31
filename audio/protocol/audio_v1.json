@@ -41,6 +41,18 @@
     "encoded_offset": 1,
     "max_percent": 100
   },
+  "leveling": {
+    "scale_one_permille": 1000,
+    "initial_noise_floor_mean_abs": 4,
+    "minimum_noise_floor_mean_abs": 1,
+    "noise_rise_time_ms": 3200,
+    "noise_fall_time_ms": 800,
+    "speech_hold_ms": 300,
+    "attenuation_attack_ms": 80,
+    "attenuation_release_ms": 40,
+    "maximum_effective_gain_permille": 24000,
+    "maximum_noise_output_mean_abs": 64
+  },
   "lossless_rice": {
     "packet_flag": 1,
     "header_bytes": 6,

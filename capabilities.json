@@ -54,11 +54,14 @@
         ],
         "host": [
           "audio/host/rust/src/lib.rs",
+          "audio/host/rust/src/leveling_v1.rs",
           "audio/host/rust/src/lossless_v1.rs",
           "audio/host/rust/src/transport_v1.rs"
         ],
         "embedded": [
           "audio/embedded/c/include/denzic_audio_v1_generated.h",
+          "audio/embedded/c/include/denzic_audio_leveling_v1.h",
+          "audio/embedded/c/src/denzic_audio_leveling_v1.c",
           "audio/embedded/c/include/denzic_audio_lossless_v1.h",
           "audio/embedded/c/include/denzic_audio_transport_v1.h",
           "audio/embedded/c/src/denzic_audio_transport_v1.c"

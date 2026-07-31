@@ -44,6 +44,9 @@ def render_rust(spec):
     raw_level = spec.get("raw_input_level")
     if raw_level is not None:
         lines.extend(render_rust_raw_input_level(raw_level))
+    leveling = spec.get("leveling")
+    if leveling is not None:
+        lines.extend(render_rust_leveling(leveling))
     rice = spec.get("lossless_rice")
     if rice is not None:
         lines.extend(render_rust_lossless_rice(rice))
@@ -58,6 +61,21 @@ def render_rust_raw_input_level(raw_level):
         f'pub const RAW_INPUT_LEVEL_ABSENT_ENCODED: u8 = {raw_level["absent_encoded"]};',
         f'pub const RAW_INPUT_LEVEL_ENCODED_OFFSET: u8 = {raw_level["encoded_offset"]};',
         f'pub const RAW_INPUT_LEVEL_MAX_PERCENT: u8 = {raw_level["max_percent"]};',
+    ]
+
+
+def render_rust_leveling(leveling):
+    return [
+        f'pub const LEVELING_SCALE_ONE_PERMILLE: u32 = {leveling["scale_one_permille"]};',
+        f'pub const LEVELING_INITIAL_NOISE_FLOOR_MEAN_ABS: u32 = {leveling["initial_noise_floor_mean_abs"]};',
+        f'pub const LEVELING_MINIMUM_NOISE_FLOOR_MEAN_ABS: u32 = {leveling["minimum_noise_floor_mean_abs"]};',
+        f'pub const LEVELING_NOISE_RISE_TIME_MS: u32 = {leveling["noise_rise_time_ms"]};',
+        f'pub const LEVELING_NOISE_FALL_TIME_MS: u32 = {leveling["noise_fall_time_ms"]};',
+        f'pub const LEVELING_SPEECH_HOLD_MS: u32 = {leveling["speech_hold_ms"]};',
+        f'pub const LEVELING_ATTENUATION_ATTACK_MS: u32 = {leveling["attenuation_attack_ms"]};',
+        f'pub const LEVELING_ATTENUATION_RELEASE_MS: u32 = {leveling["attenuation_release_ms"]};',
+        f'pub const LEVELING_MAXIMUM_EFFECTIVE_GAIN_PERMILLE: u32 = {leveling["maximum_effective_gain_permille"]};',
+        f'pub const LEVELING_MAXIMUM_NOISE_OUTPUT_MEAN_ABS: u32 = {leveling["maximum_noise_output_mean_abs"]};',
     ]
 
 
@@ -142,6 +160,10 @@ def render_c(spec):
     if raw_level is not None:
         lines.extend(render_c_raw_input_level(raw_level))
         lines.append("")
+    leveling = spec.get("leveling")
+    if leveling is not None:
+        lines.extend(render_c_leveling(leveling))
+        lines.append("")
     rice = spec.get("lossless_rice")
     if rice is not None:
         lines.extend(render_c_lossless_rice(rice))
@@ -218,6 +240,21 @@ def render_c_raw_input_level(raw_level):
     ]
 
 
+def render_c_leveling(leveling):
+    return [
+        f'#define DENZIC_AUDIO_V1_LEVELING_SCALE_ONE_PERMILLE ({leveling["scale_one_permille"]}u)',
+        f'#define DENZIC_AUDIO_V1_LEVELING_INITIAL_NOISE_FLOOR_MEAN_ABS ({leveling["initial_noise_floor_mean_abs"]}u)',
+        f'#define DENZIC_AUDIO_V1_LEVELING_MINIMUM_NOISE_FLOOR_MEAN_ABS ({leveling["minimum_noise_floor_mean_abs"]}u)',
+        f'#define DENZIC_AUDIO_V1_LEVELING_NOISE_RISE_TIME_MS ({leveling["noise_rise_time_ms"]}u)',
+        f'#define DENZIC_AUDIO_V1_LEVELING_NOISE_FALL_TIME_MS ({leveling["noise_fall_time_ms"]}u)',
+        f'#define DENZIC_AUDIO_V1_LEVELING_SPEECH_HOLD_MS ({leveling["speech_hold_ms"]}u)',
+        f'#define DENZIC_AUDIO_V1_LEVELING_ATTENUATION_ATTACK_MS ({leveling["attenuation_attack_ms"]}u)',
+        f'#define DENZIC_AUDIO_V1_LEVELING_ATTENUATION_RELEASE_MS ({leveling["attenuation_release_ms"]}u)',
+        f'#define DENZIC_AUDIO_V1_LEVELING_MAXIMUM_EFFECTIVE_GAIN_PERMILLE ({leveling["maximum_effective_gain_permille"]}u)',
+        f'#define DENZIC_AUDIO_V1_LEVELING_MAXIMUM_NOISE_OUTPUT_MEAN_ABS ({leveling["maximum_noise_output_mean_abs"]}u)',
+    ]
+
+
 def render_c_lossless_rice(rice):
     lines = [
         f'#define DENZIC_AUDIO_V1_LOSSLESS_RICE_PACKET_FLAG (0x{rice["packet_flag"]:02x}u)',
@@ -288,6 +325,30 @@ def validate_raw_input_level(spec):
         raise SystemExit("lossless rice packet flag overlaps raw input level flags[7:1]")
 
 
+def validate_leveling(spec):
+    leveling = spec.get("leveling")
+    if leveling is None:
+        raise SystemExit("audio leveling policy is required")
+    required_positive = [
+        "scale_one_permille",
+        "initial_noise_floor_mean_abs",
+        "minimum_noise_floor_mean_abs",
+        "noise_rise_time_ms",
+        "noise_fall_time_ms",
+        "speech_hold_ms",
+        "attenuation_attack_ms",
+        "attenuation_release_ms",
+        "maximum_effective_gain_permille",
+        "maximum_noise_output_mean_abs",
+    ]
+    if any(leveling.get(name, 0) <= 0 for name in required_positive):
+        raise SystemExit("audio leveling values must be positive")
+    if leveling["initial_noise_floor_mean_abs"] < leveling["minimum_noise_floor_mean_abs"]:
+        raise SystemExit("audio leveling initial noise floor must not be below its minimum")
+    if leveling["maximum_effective_gain_permille"] < leveling["scale_one_permille"]:
+        raise SystemExit("audio leveling maximum effective gain must allow unity")
+
+
 def write_or_check(path, expected, check):
     if check:
         actual = path.read_text(encoding="utf-8") if path.exists() else None
@@ -310,6 +371,7 @@ def main():
     if spec["pcm"]["sample_rate_hz"] <= 0 or spec["pcm"]["channels"] <= 0:
         raise SystemExit("audio PCM sample rate and channels must be positive")
     validate_raw_input_level(spec)
+    validate_leveling(spec)
     validate_lossless_rice(spec)
     write_or_check(RUST_PATH, render_rust(spec), args.check)
     write_or_check(C_PATH, render_c(spec), args.check)

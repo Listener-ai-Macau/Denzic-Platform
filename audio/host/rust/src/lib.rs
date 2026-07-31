@@ -14,6 +14,7 @@ use thiserror::Error;
 mod generated;
 mod generated_transport;
 
+pub mod leveling_v1;
 pub mod lossless_v1;
 pub mod transport_v1;
 

@@ -3,7 +3,8 @@
 The audio capability carries the VKA1 wire contract (`protocol/audio_v1.json`),
 the transport flow-control contract (`protocol/audio_transport_v1.json`, with
 normative semantics in `protocol/flow_control_v1.md`), the lossless Rice codec,
-and the product-independent stream transport engine. This document states what
+the shared audio-leveling governor, and the product-independent stream
+transport engine. This document states what
 stays in the platform and what product adapters must inject.
 
 ## What the platform owns
@@ -29,6 +30,11 @@ stays in the platform and what product adapters must inject.
   session statistics already live in `host/rust/src/lib.rs`.
 - Generated constants on both ends from `audio_transport_v1.json`
   (`denzic_audio_transport_v1_generated.h`, `generated_transport.rs`).
+- `embedded/c/src/denzic_audio_leveling_v1.c` and
+  `host/rust/src/leveling_v1.rs` own deterministic post-AGC gain ceilings,
+  non-speech noise-floor learning, voiced hold/attack/release decisions and
+  paired level summaries. The governor returns attenuation only and never
+  owns PCM, VAD, a DSP engine or the final limiter.
 
 ## What product adapters own
 
@@ -49,6 +55,11 @@ stays in the platform and what product adapters must inject.
 - Host capture-loop deadlines (idle timeout, stop-drain rolling window,
   link-recovery window): the platform decides *what* the outcome of an
   expired window is; the adapter owns the clocks and the error wording.
+- Product leveling configuration and measurements: adapters provide paired
+  pre-AGC/post-AGC frame mean values plus their authoritative speech flag,
+  apply the returned scale before their final limiter, and tune board/model
+  limits from measured fixtures. Processed output never feeds a raw-input UI
+  meter.
 
 ## Wiring
 
