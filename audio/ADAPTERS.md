@@ -71,3 +71,5 @@ stays in the platform and what product adapters must inject.
 
 `tools/verify.ps1` regenerates both ends (`generate_audio_transport_v1.py
 --check`) and runs the C core's ctest suite and the host crate's unit tests.
+`cargo run --manifest-path audio/host/rust/Cargo.toml --example leveling_report`
+emits the versioned noise/soft/far/normal/loud paired-level fixture report.
