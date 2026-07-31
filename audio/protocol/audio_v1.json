@@ -34,6 +34,13 @@
     "packet_too_large": 7,
     "transport": 8
   },
+  "raw_input_level": {
+    "flag_shift": 1,
+    "flag_bits": 7,
+    "absent_encoded": 0,
+    "encoded_offset": 1,
+    "max_percent": 100
+  },
   "lossless_rice": {
     "packet_flag": 1,
     "header_bytes": 6,

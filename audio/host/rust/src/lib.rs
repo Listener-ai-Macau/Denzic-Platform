@@ -19,9 +19,27 @@ pub mod transport_v1;
 
 pub use generated::{
     HEADER_LEN, MAGIC, MAGIC_U32, PCM_BYTES_PER_SECOND, PCM_CHANNELS, PCM_SAMPLE_RATE_HZ,
-    PCM_SAMPLE_WIDTH_BITS, PROTOCOL_NAME, PROTOCOL_VERSION,
+    PCM_SAMPLE_WIDTH_BITS, PROTOCOL_NAME, PROTOCOL_VERSION, RAW_INPUT_LEVEL_ABSENT_ENCODED,
+    RAW_INPUT_LEVEL_ENCODED_OFFSET, RAW_INPUT_LEVEL_FLAG_MASK, RAW_INPUT_LEVEL_FLAG_SHIFT,
+    RAW_INPUT_LEVEL_MAX_PERCENT,
 };
 pub const DEFAULT_REPLAY_PAYLOAD_PCM_BYTES: usize = 480;
+
+pub fn flags_with_raw_input_level_percent(flags: u8, level_percent: u8) -> u8 {
+    let level_percent = level_percent.min(RAW_INPUT_LEVEL_MAX_PERCENT);
+    let encoded = level_percent.saturating_add(RAW_INPUT_LEVEL_ENCODED_OFFSET);
+    (flags & !RAW_INPUT_LEVEL_FLAG_MASK) | (encoded << RAW_INPUT_LEVEL_FLAG_SHIFT)
+}
+
+pub fn raw_input_level_percent_from_flags(flags: u8) -> Option<u8> {
+    let encoded = (flags & RAW_INPUT_LEVEL_FLAG_MASK) >> RAW_INPUT_LEVEL_FLAG_SHIFT;
+    if encoded == RAW_INPUT_LEVEL_ABSENT_ENCODED {
+        return None;
+    }
+    encoded
+        .checked_sub(RAW_INPUT_LEVEL_ENCODED_OFFSET)
+        .map(|level| level.min(RAW_INPUT_LEVEL_MAX_PERCENT))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EmbeddedAudioInputFormat {
@@ -741,6 +759,7 @@ pub struct StreamingPcmChunk {
     pub session_id: u32,
     pub packet_sequence: u16,
     pub pcm: Vec<u8>,
+    pub raw_input_level_percent: Option<u8>,
     pub after_stop_boundary: bool,
 }
 
@@ -806,6 +825,7 @@ impl StreamingSessionCollector {
                 session_id,
                 packet_sequence,
                 pcm,
+                raw_input_level_percent: raw_input_level_percent_from_flags(header.flags),
                 after_stop_boundary,
             }),
             SessionEvent::Stopped {
@@ -1386,6 +1406,54 @@ mod tests {
     }
 
     #[test]
+    fn raw_input_level_flags_preserve_payload_and_legacy_absence() {
+        let legacy = packet(PacketType::AudioData, 8, 3, &[9, 8, 7, 6], Some(4));
+        let legacy_packet = parse_packet(&legacy).expect("legacy packet");
+        assert_eq!(
+            raw_input_level_percent_from_flags(legacy_packet.header.flags),
+            None
+        );
+        assert_eq!(legacy_packet.payload, &[9, 8, 7, 6]);
+
+        for level in [0, 17, 64, 100, 127] {
+            let mut notification = legacy.clone();
+            notification[5] =
+                flags_with_raw_input_level_percent(lossless_v1::LOSSLESS_RICE_FLAG, level);
+            let parsed = parse_packet(&notification).expect("level packet");
+            assert_eq!(
+                raw_input_level_percent_from_flags(parsed.header.flags),
+                Some(level.min(100))
+            );
+            assert_ne!(
+                parsed.header.flags & lossless_v1::LOSSLESS_RICE_FLAG,
+                0,
+                "raw level must preserve the lossless codec flag"
+            );
+            assert_eq!(parsed.payload, &[9, 8, 7, 6]);
+        }
+    }
+
+    #[test]
+    fn streaming_collector_surfaces_raw_input_level_metadata() {
+        let mut collector = StreamingSessionCollector::default();
+        let mut notification = packet(PacketType::AudioData, 9, 4, &[1, 2, 3, 4], Some(4));
+        notification[5] = flags_with_raw_input_level_percent(0, 37);
+
+        assert_eq!(
+            collector
+                .handle_notification(&notification)
+                .expect("audio with raw level"),
+            StreamingSessionEvent::PcmChunk(StreamingPcmChunk {
+                session_id: 9,
+                packet_sequence: 4,
+                pcm: vec![1, 2, 3, 4],
+                raw_input_level_percent: Some(37),
+                after_stop_boundary: false,
+            })
+        );
+    }
+
+    #[test]
     fn parser_rejects_fragmented_legacy_packets() {
         let mut notification = packet(PacketType::AudioData, 7, 0, &[1, 2], None);
         notification[15] = 2;
@@ -1525,6 +1593,7 @@ mod tests {
                 session_id: 152,
                 packet_sequence: 0,
                 pcm: expected.clone(),
+                raw_input_level_percent: None,
                 after_stop_boundary: false,
             })
         );
@@ -1656,6 +1725,7 @@ mod tests {
                 session_id: 205,
                 packet_sequence: 0,
                 pcm: vec![1, 2],
+                raw_input_level_percent: None,
                 after_stop_boundary: false,
             })
         );
@@ -1665,6 +1735,7 @@ mod tests {
                 session_id: 205,
                 packet_sequence: 1,
                 pcm: vec![3, 4],
+                raw_input_level_percent: None,
                 after_stop_boundary: false,
             })
         );
@@ -1778,6 +1849,7 @@ mod tests {
                 session_id: 209,
                 packet_sequence: 1,
                 pcm: vec![3, 4],
+                raw_input_level_percent: None,
                 after_stop_boundary: true,
             })
         );
@@ -1843,6 +1915,7 @@ mod tests {
                 session_id: 206,
                 packet_sequence: 0,
                 pcm: vec![1, 2, 3, 4],
+                raw_input_level_percent: None,
                 after_stop_boundary: false,
             })
         );

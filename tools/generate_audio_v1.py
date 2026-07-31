@@ -41,10 +41,24 @@ def render_rust(spec):
         lines.append(f"pub const SESSION_STOP_ORIGIN_{name}: u16 = {value};")
     for name, value in upper_items(spec["session_errors"]):
         lines.append(f"pub const SESSION_ERROR_{name}: u16 = {value};")
+    raw_level = spec.get("raw_input_level")
+    if raw_level is not None:
+        lines.extend(render_rust_raw_input_level(raw_level))
     rice = spec.get("lossless_rice")
     if rice is not None:
         lines.extend(render_rust_lossless_rice(rice))
     return "\n".join(lines) + "\n"
+
+
+def render_rust_raw_input_level(raw_level):
+    mask = ((1 << raw_level["flag_bits"]) - 1) << raw_level["flag_shift"]
+    return [
+        f'pub const RAW_INPUT_LEVEL_FLAG_SHIFT: u8 = {raw_level["flag_shift"]};',
+        f'pub const RAW_INPUT_LEVEL_FLAG_MASK: u8 = 0x{mask:02x};',
+        f'pub const RAW_INPUT_LEVEL_ABSENT_ENCODED: u8 = {raw_level["absent_encoded"]};',
+        f'pub const RAW_INPUT_LEVEL_ENCODED_OFFSET: u8 = {raw_level["encoded_offset"]};',
+        f'pub const RAW_INPUT_LEVEL_MAX_PERCENT: u8 = {raw_level["max_percent"]};',
+    ]
 
 
 def render_rust_lossless_rice(rice):
@@ -124,6 +138,10 @@ def render_c(spec):
         "} denzic_audio_v1_session_error_t;",
         "",
     ])
+    raw_level = spec.get("raw_input_level")
+    if raw_level is not None:
+        lines.extend(render_c_raw_input_level(raw_level))
+        lines.append("")
     rice = spec.get("lossless_rice")
     if rice is not None:
         lines.extend(render_c_lossless_rice(rice))
@@ -189,6 +207,17 @@ def render_c(spec):
     return "\n".join(lines)
 
 
+def render_c_raw_input_level(raw_level):
+    mask = ((1 << raw_level["flag_bits"]) - 1) << raw_level["flag_shift"]
+    return [
+        f'#define DENZIC_AUDIO_V1_RAW_INPUT_LEVEL_FLAG_SHIFT ({raw_level["flag_shift"]}u)',
+        f'#define DENZIC_AUDIO_V1_RAW_INPUT_LEVEL_FLAG_MASK (0x{mask:02x}u)',
+        f'#define DENZIC_AUDIO_V1_RAW_INPUT_LEVEL_ABSENT_ENCODED ({raw_level["absent_encoded"]}u)',
+        f'#define DENZIC_AUDIO_V1_RAW_INPUT_LEVEL_ENCODED_OFFSET ({raw_level["encoded_offset"]}u)',
+        f'#define DENZIC_AUDIO_V1_RAW_INPUT_LEVEL_MAX_PERCENT ({raw_level["max_percent"]}u)',
+    ]
+
+
 def render_c_lossless_rice(rice):
     lines = [
         f'#define DENZIC_AUDIO_V1_LOSSLESS_RICE_PACKET_FLAG (0x{rice["packet_flag"]:02x}u)',
@@ -240,6 +269,25 @@ def validate_lossless_rice(spec):
         raise SystemExit("lossless rice v3 seed count must equal the predictor order")
 
 
+def validate_raw_input_level(spec):
+    raw_level = spec.get("raw_input_level")
+    if raw_level is None:
+        return
+    if raw_level != {
+        "flag_shift": 1,
+        "flag_bits": 7,
+        "absent_encoded": 0,
+        "encoded_offset": 1,
+        "max_percent": 100,
+    }:
+        raise SystemExit(
+            "raw input level must reserve flags[7:1], encoded 0=absent and 1..101=0..100 percent"
+        )
+    rice = spec.get("lossless_rice")
+    if rice is not None and rice["packet_flag"] & 0xFE:
+        raise SystemExit("lossless rice packet flag overlaps raw input level flags[7:1]")
+
+
 def write_or_check(path, expected, check):
     if check:
         actual = path.read_text(encoding="utf-8") if path.exists() else None
@@ -261,6 +309,7 @@ def main():
         raise SystemExit("audio v1 header_bytes must remain 20")
     if spec["pcm"]["sample_rate_hz"] <= 0 or spec["pcm"]["channels"] <= 0:
         raise SystemExit("audio PCM sample rate and channels must be positive")
+    validate_raw_input_level(spec)
     validate_lossless_rice(spec)
     write_or_check(RUST_PATH, render_rust(spec), args.check)
     write_or_check(C_PATH, render_c(spec), args.check)
