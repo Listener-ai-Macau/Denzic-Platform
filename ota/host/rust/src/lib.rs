@@ -58,6 +58,9 @@ pub const RECOMMENDED_REORDER_SLOTS: u16 = 16;
 pub struct TransferOptions {
     pub chunk_payload_bytes: u16,
     pub window_chunks: u16,
+    /// Optional bound for only the first bulk window. Later confirmed active-link
+    /// windows return to `window_chunks`.
+    pub first_window_chunks: Option<u16>,
     pub status_read_attempts: u8,
     pub max_stalled_windows: u8,
     /// Rolling deadline for device-confirmed byte progress during bulk transfer.
@@ -76,6 +79,9 @@ impl TransferOptions {
         }
         if self.window_chunks == 0 {
             return Err("OTA window must contain at least one chunk".to_string());
+        }
+        if self.first_window_chunks == Some(0) {
+            return Err("OTA first window must contain at least one chunk".to_string());
         }
         if self.status_read_attempts == 0 {
             return Err("OTA status_read_attempts must be greater than zero".to_string());
@@ -97,6 +103,7 @@ impl TransferOptions {
         Self {
             chunk_payload_bytes,
             window_chunks: RECOMMENDED_DUAL_LANE_WINDOW_CHUNKS,
+            first_window_chunks: None,
             status_read_attempts: 5,
             max_stalled_windows: 3,
             progress_timeout: None,
@@ -468,6 +475,10 @@ impl<'a, T: OtaV1Transport, C: OtaClock> OtaTransferEngine<'a, T, C> {
                 }
             }
         }
+        let mut first_window_pending = self.options.first_window_chunks.is_some();
+        if let Some(first_window_chunks) = self.options.first_window_chunks {
+            window_chunks = window_chunks.min(first_window_chunks);
+        }
         let mut stalled_windows = 0u8;
         on_progress(confirmed_offset, firmware.len());
         self.arm_progress_watchdog(confirmed_offset, firmware.len());
@@ -541,6 +552,8 @@ impl<'a, T: OtaV1Transport, C: OtaClock> OtaTransferEngine<'a, T, C> {
             let link_just_became_active = !active_link_confirmed && status.active_link_confirmed();
             active_link_confirmed = status.active_link_confirmed();
             self.report.active_link_confirmed = active_link_confirmed;
+            let completed_first_window = first_window_pending;
+            first_window_pending = false;
             if device_offset != send_offset {
                 self.report.recovered_offsets += 1;
                 if status.last_error == ERROR_OFFSET_MISMATCH {
@@ -548,7 +561,7 @@ impl<'a, T: OtaV1Transport, C: OtaClock> OtaTransferEngine<'a, T, C> {
                 }
             } else {
                 if active_link_confirmed {
-                    window_chunks = if link_just_became_active {
+                    window_chunks = if completed_first_window || link_just_became_active {
                         configured_window
                     } else {
                         window_chunks.saturating_add(1).min(configured_window)
@@ -804,6 +817,7 @@ mod tests {
         image_crc32: u32,
         chunk_bytes: u16,
         window_chunks: u16,
+        sync_windows: Vec<u16>,
         state: u8,
         error: u8,
         flags: u8,
@@ -826,6 +840,7 @@ mod tests {
                 image_crc32: 0,
                 chunk_bytes: 0,
                 window_chunks: 0,
+                sync_windows: Vec::new(),
                 state: STATE_IDLE,
                 error: ERROR_NONE,
                 flags: STATUS_FLAG_ACTIVE_LINK_CONFIRMED,
@@ -886,7 +901,9 @@ mod tests {
                         self.image.clear();
                     }
                 }
-                OP_SYNC => {}
+                OP_SYNC => self
+                    .sync_windows
+                    .push(u16::from_le_bytes(packet[14..16].try_into().unwrap())),
                 OP_ABORT => self.aborted = true,
                 value => return Err(format!("unexpected control operation {value}")),
             }
@@ -962,6 +979,7 @@ mod tests {
         TransferOptions {
             chunk_payload_bytes: 5,
             window_chunks: 3,
+            first_window_chunks: None,
             status_read_attempts: 3,
             max_stalled_windows: 3,
             progress_timeout: None,
@@ -974,12 +992,26 @@ mod tests {
     fn dual_lane_bulk_options_match_recommended_windows() {
         let options = TransferOptions::dual_lane_bulk(500);
         assert_eq!(options.window_chunks, RECOMMENDED_DUAL_LANE_WINDOW_CHUNKS);
+        assert_eq!(options.first_window_chunks, None);
         assert_eq!(
             options.inactive_link_window_chunks,
             Some(RECOMMENDED_DUAL_LANE_INACTIVE_LINK_WINDOW_CHUNKS)
         );
         assert!(options.prefer_dual_lane);
         assert!(options.validate().is_ok());
+    }
+
+    #[test]
+    fn first_window_bound_restores_configured_window_after_status() {
+        let firmware: Vec<u8> = (0..20u8).collect();
+        let mut transport = MockTransport::new();
+        let mut configured = options();
+        configured.first_window_chunks = Some(1);
+
+        let report = transfer(&mut transport, &firmware, configured, |_, _| {}).unwrap();
+
+        assert_eq!(report.data_writes, 4);
+        assert_eq!(transport.sync_windows, vec![1, 3]);
     }
 
     #[test]
