@@ -75,7 +75,7 @@ bool denzic_ble_pairing_v1_type_controlled_recovery(
     bool type_controlled_request,
     bool type_link_ready,
     bool type_host_recent,
-    bool connected);
+    bool secure_connected);
 
 /* Identity action for a recovery pairing reset (protocol section 6). */
 uint8_t denzic_ble_pairing_v1_identity_for_recovery(

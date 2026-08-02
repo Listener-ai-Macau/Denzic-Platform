@@ -92,10 +92,10 @@ advertisement: at least `swift_pair_adv_min_restart_ms`, at most INT32_MAX.
 ## 6. Identity policy
 
 - `type_controlled_recovery(request, type_link_ready, type_host_recent,
-  connected) = request OR type_link_ready OR (type_host_recent AND
-  connected)`. A recent-host marker alone is not ownership evidence once
-  that host's pairing was deleted; only a live link or an explicit request
-  keeps the stable Type identity.
+  secure_connected) = request OR type_link_ready OR (type_host_recent AND
+  secure_connected)`. A recent-host marker alone is not ownership evidence once
+  that host's pairing was deleted; only a secure bonded link or an explicit
+  request keeps the stable Type identity.
 - `identity_for_recovery(type_controlled, connected)`:
 
   | type_controlled? | connected? | Action |
@@ -118,8 +118,10 @@ advertisement: at least `swift_pair_adv_min_restart_ms`, at most INT32_MAX.
 `security_failure_action(pairing_window_open)`: an encryption failure inside
 an open pairing window yields `retry_within_window` — keep pairing
 advertising available for the host's retry and terminate the insecure link
-without restarting repair. Outside a window it yields `open_repair_window` —
-open a full pairing reset and terminate the insecure connection.
+without restarting repair. Outside a window it yields
+`wait_for_explicit_recovery` — retain the local bond and identity, terminate
+the insecure link, suppress advertising, and wait for physical EC11 or an
+explicit Type-controlled recovery request.
 
 ## 8. Connection-lifecycle orchestration
 
