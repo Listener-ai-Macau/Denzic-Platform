@@ -147,7 +147,7 @@ static void test_type_controlled_recovery(void)
 {
     CHECK(denzic_ble_pairing_v1_type_controlled_recovery(true, false, false, false));
     CHECK(denzic_ble_pairing_v1_type_controlled_recovery(false, true, false, false));
-    /* A recent host marker counts only while the link is live. */
+    /* A recent host marker counts only while the link is secure. */
     CHECK(denzic_ble_pairing_v1_type_controlled_recovery(false, false, true, true));
     CHECK(!denzic_ble_pairing_v1_type_controlled_recovery(false, false, true, false));
     CHECK(!denzic_ble_pairing_v1_type_controlled_recovery(false, false, false, true));
@@ -191,9 +191,9 @@ static void test_security_failure_action(void)
      * available for the host retry instead of restarting repair. */
     CHECK(denzic_ble_pairing_v1_security_failure_action(true) ==
           DENZIC_BLE_PAIRING_V1_SECURITY_FAILURE_RETRY_WITHIN_WINDOW);
-    /* Outside the window a security failure opens a full repair. */
+    /* Outside the window a security failure waits for physical/Type recovery. */
     CHECK(denzic_ble_pairing_v1_security_failure_action(false) ==
-          DENZIC_BLE_PAIRING_V1_SECURITY_FAILURE_OPEN_REPAIR_WINDOW);
+          DENZIC_BLE_PAIRING_V1_SECURITY_FAILURE_WAIT_FOR_EXPLICIT_RECOVERY);
 }
 
 int main(void)

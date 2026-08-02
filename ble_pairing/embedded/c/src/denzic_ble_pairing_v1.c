@@ -122,11 +122,11 @@ bool denzic_ble_pairing_v1_type_controlled_recovery(
     bool type_controlled_request,
     bool type_link_ready,
     bool type_host_recent,
-    bool connected)
+    bool secure_connected)
 {
     return type_controlled_request ||
            type_link_ready ||
-           (type_host_recent && connected);
+           (type_host_recent && secure_connected);
 }
 
 uint8_t denzic_ble_pairing_v1_identity_for_recovery(
@@ -164,5 +164,5 @@ uint8_t denzic_ble_pairing_v1_security_failure_action(bool pairing_window_open)
     if (pairing_window_open) {
         return DENZIC_BLE_PAIRING_V1_SECURITY_FAILURE_RETRY_WITHIN_WINDOW;
     }
-    return DENZIC_BLE_PAIRING_V1_SECURITY_FAILURE_OPEN_REPAIR_WINDOW;
+    return DENZIC_BLE_PAIRING_V1_SECURITY_FAILURE_WAIT_FOR_EXPLICIT_RECOVERY;
 }

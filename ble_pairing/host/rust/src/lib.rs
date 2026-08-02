@@ -120,6 +120,7 @@ impl WindowCloseDecision {
 pub enum SecurityFailureAction {
     RetryWithinWindow,
     OpenRepairWindow,
+    WaitForExplicitRecovery,
 }
 
 impl SecurityFailureAction {
@@ -127,6 +128,9 @@ impl SecurityFailureAction {
         match self {
             Self::RetryWithinWindow => SECURITY_FAILURE_RETRY_WITHIN_WINDOW,
             Self::OpenRepairWindow => SECURITY_FAILURE_OPEN_REPAIR_WINDOW,
+            Self::WaitForExplicitRecovery => {
+                SECURITY_FAILURE_WAIT_FOR_EXPLICIT_RECOVERY
+            }
         }
     }
 }
@@ -286,9 +290,9 @@ pub const fn type_controlled_recovery(
     type_controlled_request: bool,
     type_link_ready: bool,
     type_host_recent: bool,
-    connected: bool,
+    secure_connected: bool,
 ) -> bool {
-    type_controlled_request || type_link_ready || (type_host_recent && connected)
+    type_controlled_request || type_link_ready || (type_host_recent && secure_connected)
 }
 
 /// Identity action for a recovery pairing reset.
@@ -326,7 +330,7 @@ pub const fn security_failure_action(pairing_window_open: bool) -> SecurityFailu
     if pairing_window_open {
         return SecurityFailureAction::RetryWithinWindow;
     }
-    SecurityFailureAction::OpenRepairWindow
+    SecurityFailureAction::WaitForExplicitRecovery
 }
 
 #[cfg(test)]
@@ -524,7 +528,7 @@ mod tests {
         );
         assert_eq!(
             security_failure_action(false),
-            SecurityFailureAction::OpenRepairWindow
+            SecurityFailureAction::WaitForExplicitRecovery
         );
     }
 

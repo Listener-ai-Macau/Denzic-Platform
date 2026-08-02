@@ -37,7 +37,8 @@
   ],
   "security_failure_actions": [
     { "name": "retry_within_window", "code": 1 },
-    { "name": "open_repair_window", "code": 2 }
+    { "name": "open_repair_window", "code": 2 },
+    { "name": "wait_for_explicit_recovery", "code": 3 }
   ],
   "swift_pair_prompt_evaluations": [
     { "name": "active", "code": 1 },
