@@ -128,9 +128,7 @@ impl SecurityFailureAction {
         match self {
             Self::RetryWithinWindow => SECURITY_FAILURE_RETRY_WITHIN_WINDOW,
             Self::OpenRepairWindow => SECURITY_FAILURE_OPEN_REPAIR_WINDOW,
-            Self::WaitForExplicitRecovery => {
-                SECURITY_FAILURE_WAIT_FOR_EXPLICIT_RECOVERY
-            }
+            Self::WaitForExplicitRecovery => SECURITY_FAILURE_WAIT_FOR_EXPLICIT_RECOVERY,
         }
     }
 }
