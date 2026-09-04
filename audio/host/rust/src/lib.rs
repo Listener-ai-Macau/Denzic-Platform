@@ -252,6 +252,7 @@ pub enum SessionErrorCode {
 pub enum SessionStopOrigin {
     User,
     VoiceActivation,
+    VoiceActivationMaxDuration,
     Unknown(u16),
 }
 
@@ -290,6 +291,9 @@ impl SessionStopOrigin {
             value if value == generated::SESSION_STOP_ORIGIN_VOICE_ACTIVATION => {
                 Self::VoiceActivation
             }
+            value if value == generated::SESSION_STOP_ORIGIN_VOICE_ACTIVATION_MAX_DURATION => {
+                Self::VoiceActivationMaxDuration
+            }
             other => Self::Unknown(other),
         }
     }
@@ -298,6 +302,9 @@ impl SessionStopOrigin {
         match self {
             Self::User => generated::SESSION_STOP_ORIGIN_USER,
             Self::VoiceActivation => generated::SESSION_STOP_ORIGIN_VOICE_ACTIVATION,
+            Self::VoiceActivationMaxDuration => {
+                generated::SESSION_STOP_ORIGIN_VOICE_ACTIVATION_MAX_DURATION
+            }
             Self::Unknown(value) => value,
         }
     }

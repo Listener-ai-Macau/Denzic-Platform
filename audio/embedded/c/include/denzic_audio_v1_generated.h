@@ -36,6 +36,7 @@ typedef enum {
 typedef enum {
     DENZIC_AUDIO_V1_SESSION_STOP_ORIGIN_USER = 0,
     DENZIC_AUDIO_V1_SESSION_STOP_ORIGIN_VOICE_ACTIVATION = 1,
+    DENZIC_AUDIO_V1_SESSION_STOP_ORIGIN_VOICE_ACTIVATION_MAX_DURATION = 2,
 } denzic_audio_v1_session_stop_origin_t;
 
 typedef enum {
