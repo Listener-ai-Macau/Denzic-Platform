@@ -21,7 +21,8 @@
   },
   "session_stop_origins": {
     "user": 0,
-    "voice_activation": 1
+    "voice_activation": 1,
+    "voice_activation_max_duration": 2
   },
   "session_errors": {
     "none": 0,
