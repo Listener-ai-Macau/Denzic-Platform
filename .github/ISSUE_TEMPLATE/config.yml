@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Listener Type support
+    url: https://github.com/Listener-ai-Macau/Listener-Type/issues
+    about: Desktop app, recognition, writing, insertion, and Windows integration.
+  - name: Listener Firmware support
+    url: https://github.com/Listener-ai-Macau/Listener-Firmware/issues
+    about: Hardware, capture, BLE transport, controls, power, LEDs, and OTA integration.

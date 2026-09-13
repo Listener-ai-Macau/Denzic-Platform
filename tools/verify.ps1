@@ -3,6 +3,18 @@ param()
 
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$repoHashBytes = [System.Security.Cryptography.SHA256]::HashData(
+    [System.Text.Encoding]::UTF8.GetBytes($repoRoot)
+)
+$repoHash = [Convert]::ToHexString($repoHashBytes).Substring(0, 12).ToLowerInvariant()
+$cmakeBuildRoot = if ([string]::IsNullOrWhiteSpace($env:DENZIC_PLATFORM_BUILD_DIR)) {
+    $localBuildRoot = Join-Path (
+        [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+    ) "Denzic\Build"
+    Join-Path $localBuildRoot "platform-$repoHash"
+} else {
+    [System.IO.Path]::GetFullPath($env:DENZIC_PLATFORM_BUILD_DIR)
+}
 
 if ($PSVersionTable.PSVersion.Major -lt 7) {
     throw "PowerShell 7 or newer is required. Run with pwsh -NoProfile -File."
@@ -91,11 +103,11 @@ try {
     node --experimental-strip-types .\ota\host\typescript\tests\protocol.test.ts
     if ($LASTEXITCODE -ne 0) { throw "TypeScript host-core tests failed." }
 
-    cmake -S . -B .\build\msvc -G "Visual Studio 17 2022" -A x64
+    cmake -S . -B $cmakeBuildRoot -G "Visual Studio 17 2022" -A x64
     if ($LASTEXITCODE -ne 0) { throw "CMake configure failed." }
-    cmake --build .\build\msvc --config Release
+    cmake --build $cmakeBuildRoot --config Release
     if ($LASTEXITCODE -ne 0) { throw "C firmware-core build failed." }
-    ctest --test-dir .\build\msvc -C Release --output-on-failure
+    ctest --test-dir $cmakeBuildRoot -C Release --output-on-failure
     if ($LASTEXITCODE -ne 0) { throw "C firmware-core tests failed." }
 } finally {
     Pop-Location

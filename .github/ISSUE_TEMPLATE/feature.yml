@@ -1,0 +1,26 @@
+name: Capability proposal
+description: Propose a shared protocol or portable behavior change.
+title: "[Proposal]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: Product need
+      description: What product behavior requires a shared contract or core change?
+    validations:
+      required: true
+  - type: textarea
+    id: boundary
+    attributes:
+      label: Shared boundary
+      description: What belongs in Platform, and which side effects remain in product adapters?
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility and rollout
+      description: How should older hosts or devices behave during rollout?
+    validations:
+      required: true
