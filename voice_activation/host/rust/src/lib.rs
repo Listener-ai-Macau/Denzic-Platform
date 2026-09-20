@@ -202,19 +202,19 @@ pub const fn local_confirmation_can_activate(
     has_keyword_model_hit: bool,
     relation: LocalPhraseRelation,
 ) -> bool {
-    if has_keyword_model_hit {
-        matches!(
-            relation,
-            LocalPhraseRelation::ExactStart
-                | LocalPhraseRelation::PhoneticStart
-                | LocalPhraseRelation::PresentLater
-        )
-    } else {
-        matches!(
-            relation,
-            LocalPhraseRelation::ExactStart | LocalPhraseRelation::PhoneticStart
-        )
-    }
+    // 2026-09-20: a contained phrase (PresentLater) used to wait for a KWS hit
+    // mid-stream and only released at the terminal pass, adding 4-5 s of felt
+    // latency with no acceptance change — the terminal pass already accepts
+    // PresentLater without KWS, and the caller's voiceprint/product-bias
+    // arbitration is the actual identity gate. KWS now only adds evidence; it
+    // no longer gates the local transcript.
+    let _ = has_keyword_model_hit;
+    matches!(
+        relation,
+        LocalPhraseRelation::ExactStart
+            | LocalPhraseRelation::PhoneticStart
+            | LocalPhraseRelation::PresentLater
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -696,7 +696,9 @@ mod tests {
             true,
             LocalPhraseRelation::PresentLater
         ));
-        assert!(!local_confirmation_can_activate(
+        // 2026-09-20: PresentLater no longer waits for a KWS hit; the terminal
+        // pass accepted the same evidence anyway, only 4-5 s later.
+        assert!(local_confirmation_can_activate(
             false,
             LocalPhraseRelation::PresentLater
         ));
