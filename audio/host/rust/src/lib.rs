@@ -7,6 +7,8 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -701,12 +703,128 @@ pub enum SessionEvent {
     Ignored(IgnoredPacketReason),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum IgnoredPacketReason {
     NonAudioBeforeStart,
     ForeignSession,
     EmptyAudioPayload,
     DuplicateOrShorterPacket,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionAdmissionDisposition {
+    New,
+    Replacement,
+    Ignored(IgnoredPacketReason),
+    Terminal,
+    ParseRejected,
+}
+
+/// Immutable evidence for one notification handled by a SessionCollector.
+/// This is an admission fact, not a second packet-admission decision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionAdmissionFact {
+    pub collector_instance_id: Option<u64>,
+    pub reset_epoch: Option<u64>,
+    pub notification_id: Option<u64>,
+    pub admission_id: Option<u64>,
+    pub physical_session_id: Option<u32>,
+    pub packet_sequence: Option<u16>,
+    pub disposition: SessionAdmissionDisposition,
+    pub supersedes_admission_id: Option<u64>,
+    /// True when the packet was accepted as a replacement but the bounded
+    /// predecessor receipt was unavailable. This is distinct from a new
+    /// packet, whose predecessor is known not to exist.
+    pub predecessor_unknown: bool,
+    pub after_stop_boundary: bool,
+    pub wire_payload_bytes: usize,
+    pub declared_pcm_bytes: usize,
+    pub expanded_pcm_bytes: usize,
+    pub metadata_incomplete: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionAdmissionWitness {
+    pub collector_instance_id: Option<u64>,
+    pub reset_epoch: Option<u64>,
+    pub notification_id: Option<u64>,
+    pub admission_id: u64,
+    pub physical_session_id: u32,
+    pub packet_sequence: u16,
+    pub superseded: bool,
+    pub superseded_by_admission_id: Option<u64>,
+    pub superseded_by_notification_id: Option<u64>,
+    pub metadata_incomplete: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionAdmissionReceipt {
+    state: Arc<Mutex<SessionAdmissionWitness>>,
+}
+
+impl PartialEq for SessionAdmissionReceipt {
+    fn eq(&self, other: &Self) -> bool {
+        self.same_reference(other)
+    }
+}
+
+impl Eq for SessionAdmissionReceipt {}
+
+impl SessionAdmissionReceipt {
+    fn new(fact: &SessionAdmissionFact) -> Option<Self> {
+        Some(Self {
+            state: Arc::new(Mutex::new(SessionAdmissionWitness {
+                collector_instance_id: fact.collector_instance_id,
+                reset_epoch: fact.reset_epoch,
+                notification_id: fact.notification_id,
+                admission_id: fact.admission_id?,
+                physical_session_id: fact.physical_session_id?,
+                packet_sequence: fact.packet_sequence?,
+                superseded: false,
+                superseded_by_admission_id: None,
+                superseded_by_notification_id: None,
+                metadata_incomplete: fact.metadata_incomplete,
+            })),
+        })
+    }
+
+    pub fn witness(&self) -> SessionAdmissionWitness {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    /// Compare the shared receipt identity, not its mutable witness snapshot.
+    pub fn same_reference(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.state, &other.state)
+    }
+
+    fn mark_superseded(
+        &self,
+        replacement_admission_id: u64,
+        replacement_notification_id: Option<u64>,
+    ) {
+        let mut witness = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        witness.superseded = true;
+        witness.superseded_by_admission_id = Some(replacement_admission_id);
+        witness.superseded_by_notification_id = replacement_notification_id;
+    }
+
+    fn mark_metadata_incomplete(&self) {
+        let mut witness = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        witness.metadata_incomplete = true;
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -762,6 +880,46 @@ pub struct EmbeddedAudioSubmissionResult {
     pub transcript: Option<EmbeddedAudioTranscriptResult>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamingPcmChunkDisposition {
+    New,
+    Replacement,
+}
+
+/// A half-open range in the collector's emitted PCM coordinate system.
+/// This is intentionally not a firmware capture/sample coordinate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamingPcmRange {
+    pub start: u64,
+    pub end: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StreamingPcmChunkMetadata {
+    pub collector_instance_id: Option<u64>,
+    pub segment_ordinal: u64,
+    pub packet_sequence: u16,
+    pub emission_ordinal: u64,
+    pub emitted_range: StreamingPcmRange,
+    pub packet_revision: u32,
+    pub packet_disposition: StreamingPcmChunkDisposition,
+    pub wire_payload_bytes: usize,
+    pub declared_pcm_bytes: usize,
+    pub expanded_pcm_bytes: usize,
+    pub previous_emission_ordinal: Option<u64>,
+    pub previous_emitted_range: Option<StreamingPcmRange>,
+    /// A replacement is a revision conflict once an earlier version was
+    /// emitted. The collector does not retract or replay that earlier PCM.
+    pub revision_conflict: bool,
+    /// Set when a checked metadata counter/range operation exhausted its
+    /// coordinate space. PCM is still emitted, but the metadata is no longer
+    /// sufficient to prove a unique range.
+    pub metadata_incomplete: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamingPcmChunk {
     pub session_id: u32,
@@ -769,6 +927,10 @@ pub struct StreamingPcmChunk {
     pub pcm: Vec<u8>,
     pub raw_input_level_percent: Option<u8>,
     pub after_stop_boundary: bool,
+    /// `None` is reserved for synthetic/manual events. Packets emitted by
+    /// `StreamingSessionCollector` always carry collector-owned metadata;
+    /// consumers must treat missing metadata as UNKNOWN.
+    pub metadata: Option<StreamingPcmChunkMetadata>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -795,14 +957,80 @@ pub enum StreamingSessionEvent {
     Ignored(IgnoredPacketReason),
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct StreamingSessionCollector {
     inner: SessionCollector,
+    collector_instance_id: Option<u64>,
+    segment_ordinal: u64,
+    segment_open: bool,
+    next_emission_ordinal: u64,
+    segment_emitted_pcm_bytes: u64,
+    packet_revisions: BTreeMap<(u32, u16), StreamingPacketRevisionState>,
+    metadata_incomplete: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct StreamingPacketRevisionState {
+    revision: u32,
+    emission_ordinal: u64,
+    emitted_range: StreamingPcmRange,
+}
+
+static NEXT_STREAMING_COLLECTOR_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
+
+fn allocate_collector_instance_id(counter: &AtomicU64) -> Option<u64> {
+    loop {
+        let current = counter.load(Ordering::Relaxed);
+        if current == 0 {
+            return None;
+        }
+        let next = current.checked_add(1).unwrap_or(0);
+        match counter.compare_exchange(current, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return Some(current),
+            Err(_) => continue,
+        }
+    }
+}
+
+impl Default for StreamingSessionCollector {
+    fn default() -> Self {
+        let collector_instance_id =
+            allocate_collector_instance_id(&NEXT_STREAMING_COLLECTOR_INSTANCE_ID);
+        Self {
+            inner: SessionCollector::default(),
+            collector_instance_id,
+            segment_ordinal: 0,
+            segment_open: false,
+            next_emission_ordinal: 0,
+            segment_emitted_pcm_bytes: 0,
+            packet_revisions: BTreeMap::new(),
+            metadata_incomplete: collector_instance_id.is_none(),
+        }
+    }
 }
 
 impl StreamingSessionCollector {
     pub fn reset(&mut self) {
         self.inner.reset();
+        self.segment_open = false;
+        self.segment_emitted_pcm_bytes = 0;
+        self.packet_revisions.clear();
+    }
+
+    pub fn collector_instance_id(&self) -> Option<u64> {
+        self.collector_instance_id
+    }
+
+    pub fn reset_epoch(&self) -> Option<u64> {
+        self.inner.reset_epoch()
+    }
+
+    pub fn segment_ordinal(&self) -> u64 {
+        self.segment_ordinal
+    }
+
+    pub fn last_admission_fact(&self) -> Option<SessionAdmissionFact> {
+        self.inner.last_admission_fact()
     }
 
     pub fn handle_notification(
@@ -815,27 +1043,116 @@ impl StreamingSessionCollector {
 
     pub fn handle_packet(&mut self, packet: Packet<'_>) -> StreamingSessionEvent {
         let header = packet.header;
+        let inner_reset_epoch = self.inner.reset_epoch();
+        let mut metadata_segment_started = false;
+        if header.packet_type == PacketType::SessionStart
+            && self.inner.session_id() != Some(header.session_id)
+        {
+            self.begin_segment();
+            metadata_segment_started = true;
+        }
         let after_stop_boundary =
             header.packet_type == PacketType::AudioData && self.inner.after_stop_boundary();
         let pcm = (header.packet_type == PacketType::AudioData)
             .then(|| packet.expanded_payload_pcm())
             .unwrap_or_default();
+        let wire_payload_bytes = packet.payload.len();
+        let declared_pcm_bytes = (header.packet_type == PacketType::AudioData)
+            .then(|| packet.declared_pcm_bytes())
+            .unwrap_or_default();
         let event = self.inner.handle_packet(packet);
+        if self.inner.reset_epoch() != inner_reset_epoch && !metadata_segment_started {
+            self.begin_segment();
+        }
         match event {
             SessionEvent::Started { session_id, origin } => {
+                if !self.segment_open {
+                    self.begin_segment();
+                }
                 StreamingSessionEvent::Started { session_id, origin }
             }
             SessionEvent::AudioData {
                 session_id,
                 packet_sequence,
                 ..
-            } => StreamingSessionEvent::PcmChunk(StreamingPcmChunk {
-                session_id,
-                packet_sequence,
-                pcm,
-                raw_input_level_percent: raw_input_level_percent_from_flags(header.flags),
-                after_stop_boundary,
-            }),
+            } => {
+                if !self.segment_open {
+                    self.begin_segment();
+                }
+                let packet_key = (session_id, packet_sequence);
+                let (
+                    packet_revision,
+                    packet_disposition,
+                    previous_emission_ordinal,
+                    previous_emitted_range,
+                ) = if let Some(previous) = self.packet_revisions.get(&packet_key).copied() {
+                    (
+                        match previous.revision.checked_add(1) {
+                            Some(revision) => revision,
+                            None => {
+                                self.metadata_incomplete = true;
+                                u32::MAX
+                            }
+                        },
+                        StreamingPcmChunkDisposition::Replacement,
+                        Some(previous.emission_ordinal),
+                        Some(previous.emitted_range),
+                    )
+                } else {
+                    (0, StreamingPcmChunkDisposition::New, None, None)
+                };
+                let emission_ordinal = self.next_emission_ordinal;
+                self.next_emission_ordinal = match self.next_emission_ordinal.checked_add(1) {
+                    Some(next) => next,
+                    None => {
+                        self.metadata_incomplete = true;
+                        u64::MAX
+                    }
+                };
+                let start = self.segment_emitted_pcm_bytes;
+                let end = match start.checked_add(pcm.len() as u64) {
+                    Some(end) => end,
+                    None => {
+                        self.metadata_incomplete = true;
+                        u64::MAX
+                    }
+                };
+                let emitted_range = StreamingPcmRange { start, end };
+                self.segment_emitted_pcm_bytes = end;
+                let metadata = StreamingPcmChunkMetadata {
+                    collector_instance_id: self.collector_instance_id,
+                    segment_ordinal: self.segment_ordinal,
+                    packet_sequence,
+                    emission_ordinal,
+                    emitted_range,
+                    packet_revision,
+                    packet_disposition,
+                    wire_payload_bytes,
+                    declared_pcm_bytes,
+                    expanded_pcm_bytes: pcm.len(),
+                    previous_emission_ordinal,
+                    previous_emitted_range,
+                    revision_conflict: packet_disposition
+                        == StreamingPcmChunkDisposition::Replacement,
+                    metadata_incomplete: self.metadata_incomplete,
+                };
+                self.packet_revisions.insert(
+                    packet_key,
+                    StreamingPacketRevisionState {
+                        revision: packet_revision,
+                        emission_ordinal,
+                        emitted_range,
+                    },
+                );
+                StreamingSessionEvent::PcmChunk(StreamingPcmChunk {
+                    session_id,
+                    packet_sequence,
+                    pcm,
+                    raw_input_level_percent: raw_input_level_percent_from_flags(header.flags),
+                    after_stop_boundary,
+                    metadata: Some(metadata),
+                })
+            }
             SessionEvent::Stopped {
                 session_id,
                 expected_packet_count,
@@ -872,10 +1189,24 @@ impl StreamingSessionCollector {
     pub fn into_inner(self) -> SessionCollector {
         self.inner
     }
+
+    fn begin_segment(&mut self) {
+        self.segment_ordinal = match self.segment_ordinal.checked_add(1) {
+            Some(next) => next,
+            None => {
+                self.metadata_incomplete = true;
+                u64::MAX
+            }
+        };
+        self.segment_open = true;
+        self.segment_emitted_pcm_bytes = 0;
+        self.packet_revisions.clear();
+    }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct SessionCollector {
+    collector_instance_id: Option<u64>,
     session_id: Option<u32>,
     explicit_start_received: bool,
     start_inferred_from_audio: bool,
@@ -892,26 +1223,145 @@ pub struct SessionCollector {
     duplicate_packet_count: usize,
     replaced_packet_count: usize,
     ignored_foreign_packet_count: usize,
+    reset_epoch: Option<u64>,
+    next_notification_id: Option<u64>,
+    next_admission_id: Option<u64>,
+    admission_receipts: BTreeMap<(u32, u16), SessionAdmissionReceipt>,
+    last_admission_fact: Option<SessionAdmissionFact>,
+    last_admission_receipt: Option<SessionAdmissionReceipt>,
+    last_audio_was_replacement: bool,
+    metadata_incomplete: bool,
+}
+
+static NEXT_SESSION_COLLECTOR_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
+const SESSION_ADMISSION_RECEIPT_CAPACITY: usize = 4096;
+
+impl Default for SessionCollector {
+    fn default() -> Self {
+        let collector_instance_id =
+            allocate_collector_instance_id(&NEXT_SESSION_COLLECTOR_INSTANCE_ID);
+        Self {
+            collector_instance_id,
+            session_id: None,
+            explicit_start_received: false,
+            start_inferred_from_audio: false,
+            start_origin: None,
+            terminal_received: false,
+            expected_packet_count: None,
+            end_reason: None,
+            stop_origin: None,
+            audio_packets: BTreeMap::new(),
+            packet_pcm_bytes: BTreeMap::new(),
+            asr_boundary_audio_packets: BTreeMap::new(),
+            asr_boundary_packet_pcm_bytes: BTreeMap::new(),
+            post_stop_packet_pcm_bytes: BTreeMap::new(),
+            duplicate_packet_count: 0,
+            replaced_packet_count: 0,
+            ignored_foreign_packet_count: 0,
+            reset_epoch: Some(0),
+            next_notification_id: Some(0),
+            next_admission_id: Some(0),
+            admission_receipts: BTreeMap::new(),
+            last_admission_fact: None,
+            last_admission_receipt: None,
+            last_audio_was_replacement: false,
+            metadata_incomplete: collector_instance_id.is_none(),
+        }
+    }
 }
 
 impl SessionCollector {
     pub fn reset(&mut self) {
-        *self = Self::default();
+        self.reset_epoch = match self.reset_epoch {
+            Some(epoch) => match epoch.checked_add(1) {
+                Some(next) => Some(next),
+                None => {
+                    self.metadata_incomplete = true;
+                    None
+                }
+            },
+            None => {
+                self.metadata_incomplete = true;
+                None
+            }
+        };
+        self.session_id = None;
+        self.explicit_start_received = false;
+        self.start_inferred_from_audio = false;
+        self.start_origin = None;
+        self.terminal_received = false;
+        self.expected_packet_count = None;
+        self.end_reason = None;
+        self.stop_origin = None;
+        self.audio_packets.clear();
+        self.packet_pcm_bytes.clear();
+        self.asr_boundary_audio_packets.clear();
+        self.asr_boundary_packet_pcm_bytes.clear();
+        self.post_stop_packet_pcm_bytes.clear();
+        self.duplicate_packet_count = 0;
+        self.replaced_packet_count = 0;
+        self.ignored_foreign_packet_count = 0;
+        self.admission_receipts.clear();
+        self.last_admission_fact = None;
+        self.last_admission_receipt = None;
+        self.last_audio_was_replacement = false;
+    }
+
+    pub fn collector_instance_id(&self) -> Option<u64> {
+        self.collector_instance_id
+    }
+
+    pub fn reset_epoch(&self) -> Option<u64> {
+        self.reset_epoch
     }
 
     pub fn handle_notification(&mut self, notification: &[u8]) -> Result<SessionEvent, ParseError> {
-        let packet = parse_packet(notification)?;
-        Ok(self.handle_packet(packet))
+        let notification_id = self.allocate_notification_id();
+        let packet = match parse_packet(notification) {
+            Ok(packet) => packet,
+            Err(error) => {
+                self.record_parse_rejected(notification_id);
+                return Err(error);
+            }
+        };
+        Ok(self.handle_packet_with_notification_id(packet, notification_id))
     }
 
     pub fn handle_packet(&mut self, packet: Packet<'_>) -> SessionEvent {
+        let notification_id = self.allocate_notification_id();
+        self.handle_packet_with_notification_id(packet, notification_id)
+    }
+
+    pub fn last_admission_fact(&self) -> Option<SessionAdmissionFact> {
+        self.last_admission_fact.clone()
+    }
+
+    pub fn last_admission_receipt(&self) -> Option<SessionAdmissionReceipt> {
+        self.last_admission_receipt.clone()
+    }
+
+    fn handle_packet_with_notification_id(
+        &mut self,
+        packet: Packet<'_>,
+        notification_id: Option<u64>,
+    ) -> SessionEvent {
         let header = packet.header;
-        match header.packet_type {
+        let event = match header.packet_type {
             PacketType::SessionStart => {
-                self.reset_for_session(header.session_id);
+                let origin = SessionStartOrigin::from_wire(header.packet_pcm_bytes);
+                // Firmware may emit a request-tagged ENSURE marker for an
+                // already-running hidden segment.  It is an ownership receipt,
+                // not a second PCM boundary; resetting here would discard the
+                // wake audio that is already in this physical segment.
+                let duplicate_ensure_marker =
+                    matches!(origin, SessionStartOrigin::Unknown(value) if value & 0x8000 != 0)
+                        && self.session_id() == Some(header.session_id)
+                        && !self.terminal_received;
+                if !duplicate_ensure_marker {
+                    self.reset_for_session(header.session_id);
+                }
                 self.explicit_start_received = true;
                 self.start_inferred_from_audio = false;
-                let origin = SessionStartOrigin::from_wire(header.packet_pcm_bytes);
                 self.start_origin = Some(origin);
                 SessionEvent::Started {
                     session_id: header.session_id,
@@ -921,46 +1371,51 @@ impl SessionCollector {
             PacketType::AudioData => self.handle_audio_packet(packet),
             PacketType::SessionStop => {
                 if !self.accepts_terminal_packet(header.session_id) {
-                    return SessionEvent::Ignored(self.last_ignored_reason());
-                }
-                self.terminal_received = true;
-                self.expected_packet_count = Some(header.expected_packet_count);
-                self.end_reason = Some(SessionEndReason::Stop);
-                let origin = SessionStopOrigin::from_wire(header.packet_pcm_bytes);
-                self.stop_origin = Some(origin);
-                SessionEvent::Stopped {
-                    session_id: header.session_id,
-                    expected_packet_count: header.expected_packet_count,
-                    origin,
+                    SessionEvent::Ignored(self.last_ignored_reason())
+                } else {
+                    self.terminal_received = true;
+                    self.expected_packet_count = Some(header.expected_packet_count);
+                    self.end_reason = Some(SessionEndReason::Stop);
+                    let origin = SessionStopOrigin::from_wire(header.packet_pcm_bytes);
+                    self.stop_origin = Some(origin);
+                    SessionEvent::Stopped {
+                        session_id: header.session_id,
+                        expected_packet_count: header.expected_packet_count,
+                        origin,
+                    }
                 }
             }
             PacketType::SessionCancel => {
                 if !self.accepts_terminal_packet(header.session_id) {
-                    return SessionEvent::Ignored(self.last_ignored_reason());
-                }
-                self.terminal_received = true;
-                self.expected_packet_count = Some(header.expected_packet_count);
-                self.end_reason = Some(SessionEndReason::Cancel);
-                SessionEvent::Cancelled {
-                    session_id: header.session_id,
-                    expected_packet_count: header.expected_packet_count,
+                    SessionEvent::Ignored(self.last_ignored_reason())
+                } else {
+                    self.terminal_received = true;
+                    self.expected_packet_count = Some(header.expected_packet_count);
+                    self.end_reason = Some(SessionEndReason::Cancel);
+                    SessionEvent::Cancelled {
+                        session_id: header.session_id,
+                        expected_packet_count: header.expected_packet_count,
+                    }
                 }
             }
             PacketType::SessionError => {
                 if !self.accepts_terminal_packet(header.session_id) {
-                    return SessionEvent::Ignored(self.last_ignored_reason());
-                }
-                let error_code = SessionErrorCode::from_wire(header.packet_pcm_bytes);
-                self.terminal_received = true;
-                self.expected_packet_count = Some(header.expected_packet_count);
-                self.end_reason = Some(SessionEndReason::Error(error_code));
-                SessionEvent::Error {
-                    session_id: header.session_id,
-                    expected_packet_count: header.expected_packet_count,
-                    error_code,
+                    SessionEvent::Ignored(self.last_ignored_reason())
+                } else {
+                    let error_code = SessionErrorCode::from_wire(header.packet_pcm_bytes);
+                    self.terminal_received = true;
+                    self.expected_packet_count = Some(header.expected_packet_count);
+                    self.end_reason = Some(SessionEndReason::Error(error_code));
+                    SessionEvent::Error {
+                        session_id: header.session_id,
+                        expected_packet_count: header.expected_packet_count,
+                        error_code,
+                    }
                 }
             }
-        }
+        };
+        self.record_admission_fact(notification_id, header, &event, packet);
+        event
     }
 
     pub fn session_id(&self) -> Option<u32> {
@@ -1069,8 +1524,184 @@ impl SessionCollector {
         }
     }
 
+    fn allocate_notification_id(&mut self) -> Option<u64> {
+        let Some(id) = self.next_notification_id else {
+            self.metadata_incomplete = true;
+            return None;
+        };
+        self.next_notification_id = id.checked_add(1);
+        if self.next_notification_id.is_none() {
+            self.metadata_incomplete = true;
+        }
+        Some(id)
+    }
+
+    fn allocate_admission_id(&mut self) -> Option<u64> {
+        let Some(id) = self.next_admission_id else {
+            self.metadata_incomplete = true;
+            return None;
+        };
+        self.next_admission_id = id.checked_add(1);
+        if self.next_admission_id.is_none() {
+            self.metadata_incomplete = true;
+        }
+        Some(id)
+    }
+
+    fn record_parse_rejected(&mut self, notification_id: Option<u64>) {
+        self.last_admission_receipt = None;
+        self.last_admission_fact = Some(SessionAdmissionFact {
+            collector_instance_id: self.collector_instance_id,
+            reset_epoch: self.reset_epoch,
+            notification_id,
+            admission_id: None,
+            physical_session_id: None,
+            packet_sequence: None,
+            disposition: SessionAdmissionDisposition::ParseRejected,
+            supersedes_admission_id: None,
+            predecessor_unknown: false,
+            after_stop_boundary: false,
+            wire_payload_bytes: 0,
+            declared_pcm_bytes: 0,
+            expanded_pcm_bytes: 0,
+            metadata_incomplete: self.metadata_incomplete,
+        });
+    }
+
+    fn record_admission_fact(
+        &mut self,
+        notification_id: Option<u64>,
+        header: PacketHeader,
+        event: &SessionEvent,
+        packet: Packet<'_>,
+    ) {
+        let is_audio = header.packet_type == PacketType::AudioData;
+        let wire_payload_bytes = packet.payload.len();
+        let declared_pcm_bytes = is_audio
+            .then(|| packet.declared_pcm_bytes())
+            .unwrap_or_default();
+        let expanded_pcm_bytes = is_audio
+            // `declared_pcm_bytes()` is the exact output span used by
+            // `expanded_payload_pcm()`. Keep this fact allocation-free; the
+            // actual expanded PCM is produced only by the streaming collector.
+            .then(|| packet.declared_pcm_bytes())
+            .unwrap_or_default();
+        let after_stop_boundary = is_audio && self.after_stop_boundary();
+        let (admission_id, disposition, supersedes_admission_id, predecessor_unknown, receipt) =
+            match event {
+                SessionEvent::AudioData {
+                    session_id,
+                    packet_sequence,
+                    ..
+                } => {
+                    let key = (*session_id, *packet_sequence);
+                    let previous = self.admission_receipts.get(&key).cloned();
+                    let admission_id = self.allocate_admission_id();
+                    if previous.is_none()
+                        && self.admission_receipts.len() >= SESSION_ADMISSION_RECEIPT_CAPACITY
+                    {
+                        if let Some(oldest_key) = self.admission_receipts.keys().next().copied() {
+                            if let Some(oldest_receipt) =
+                                self.admission_receipts.remove(&oldest_key)
+                            {
+                                oldest_receipt.mark_metadata_incomplete();
+                            }
+                            // The accepted packet remains valid, but the bounded
+                            // predecessor ledger can no longer prove every
+                            // admission in this collector epoch.
+                            self.metadata_incomplete = true;
+                        }
+                    }
+                    let supersedes_admission_id = previous
+                        .as_ref()
+                        .map(|receipt| receipt.witness().admission_id);
+                    let predecessor_unknown = self.last_audio_was_replacement && previous.is_none();
+                    if let Some(admission_id) = admission_id {
+                        if let Some(previous) = previous.as_ref() {
+                            previous.mark_superseded(admission_id, notification_id);
+                        }
+                    } else if let Some(previous) = previous.as_ref() {
+                        // No new identity can safely supersede this receipt after
+                        // counter exhaustion. Remove the key so the old witness
+                        // cannot be reused as a future predecessor.
+                        previous.mark_metadata_incomplete();
+                        self.admission_receipts.remove(&key);
+                    }
+                    let disposition = if self.last_audio_was_replacement {
+                        SessionAdmissionDisposition::Replacement
+                    } else {
+                        SessionAdmissionDisposition::New
+                    };
+                    let fact = SessionAdmissionFact {
+                        collector_instance_id: self.collector_instance_id,
+                        reset_epoch: self.reset_epoch,
+                        notification_id,
+                        admission_id,
+                        physical_session_id: Some(*session_id),
+                        packet_sequence: Some(*packet_sequence),
+                        disposition,
+                        supersedes_admission_id,
+                        predecessor_unknown,
+                        after_stop_boundary,
+                        wire_payload_bytes,
+                        declared_pcm_bytes,
+                        expanded_pcm_bytes,
+                        metadata_incomplete: self.metadata_incomplete,
+                    };
+                    let receipt = SessionAdmissionReceipt::new(&fact);
+                    if let Some(receipt) = receipt.as_ref() {
+                        self.admission_receipts.insert(key, receipt.clone());
+                    }
+                    (
+                        admission_id,
+                        disposition,
+                        supersedes_admission_id,
+                        predecessor_unknown,
+                        receipt,
+                    )
+                }
+                SessionEvent::Started { .. } => {
+                    (None, SessionAdmissionDisposition::New, None, false, None)
+                }
+                SessionEvent::Stopped { .. }
+                | SessionEvent::Cancelled { .. }
+                | SessionEvent::Error { .. } => (
+                    None,
+                    SessionAdmissionDisposition::Terminal,
+                    None,
+                    false,
+                    None,
+                ),
+                SessionEvent::Ignored(reason) => (
+                    None,
+                    SessionAdmissionDisposition::Ignored(*reason),
+                    None,
+                    false,
+                    None,
+                ),
+            };
+        self.last_admission_receipt = receipt;
+        self.last_admission_fact = Some(SessionAdmissionFact {
+            collector_instance_id: self.collector_instance_id,
+            reset_epoch: self.reset_epoch,
+            notification_id,
+            admission_id,
+            physical_session_id: Some(header.session_id),
+            packet_sequence: Some(header.packet_sequence),
+            disposition,
+            supersedes_admission_id,
+            predecessor_unknown,
+            after_stop_boundary,
+            wire_payload_bytes,
+            declared_pcm_bytes,
+            expanded_pcm_bytes,
+            metadata_incomplete: self.metadata_incomplete,
+        });
+    }
+
     fn handle_audio_packet(&mut self, packet: Packet<'_>) -> SessionEvent {
         let header = packet.header;
+        self.last_audio_was_replacement = false;
         if self.session_id.is_none() {
             self.reset_for_session(header.session_id);
             self.start_inferred_from_audio = true;
@@ -1099,7 +1730,8 @@ impl SessionCollector {
             }
         }
 
-        if self.audio_packets.contains_key(&packet_sequence) {
+        let replacing_existing = self.audio_packets.contains_key(&packet_sequence);
+        if replacing_existing {
             self.replaced_packet_count += 1;
         }
 
@@ -1115,6 +1747,7 @@ impl SessionCollector {
             self.asr_boundary_packet_pcm_bytes
                 .insert(packet_sequence, packet_pcm_bytes);
         }
+        self.last_audio_was_replacement = replacing_existing;
 
         SessionEvent::AudioData {
             session_id: header.session_id,
@@ -1399,6 +2032,25 @@ fn expand_packet_payload_pcm(payload: &[u8], packet_pcm_bytes: usize) -> Vec<u8>
 mod tests {
     use super::*;
 
+    fn assert_streaming_chunk(
+        event: StreamingSessionEvent,
+        session_id: u32,
+        packet_sequence: u16,
+        pcm: &[u8],
+        raw_input_level_percent: Option<u8>,
+        after_stop_boundary: bool,
+    ) -> StreamingPcmChunkMetadata {
+        let StreamingSessionEvent::PcmChunk(chunk) = event else {
+            panic!("expected streaming PCM chunk event");
+        };
+        assert_eq!(chunk.session_id, session_id);
+        assert_eq!(chunk.packet_sequence, packet_sequence);
+        assert_eq!(chunk.pcm, pcm);
+        assert_eq!(chunk.raw_input_level_percent, raw_input_level_percent);
+        assert_eq!(chunk.after_stop_boundary, after_stop_boundary);
+        chunk.metadata.expect("collector-emitted chunk metadata")
+    }
+
     #[test]
     fn parser_maps_legacy_chunk_field_to_packet_sequence() {
         let notification = packet(PacketType::AudioData, 7, 42, &[1, 2, 3, 4], Some(2));
@@ -1447,18 +2099,29 @@ mod tests {
         let mut notification = packet(PacketType::AudioData, 9, 4, &[1, 2, 3, 4], Some(4));
         notification[5] = flags_with_raw_input_level_percent(0, 37);
 
-        assert_eq!(
+        let metadata = assert_streaming_chunk(
             collector
                 .handle_notification(&notification)
                 .expect("audio with raw level"),
-            StreamingSessionEvent::PcmChunk(StreamingPcmChunk {
-                session_id: 9,
-                packet_sequence: 4,
-                pcm: vec![1, 2, 3, 4],
-                raw_input_level_percent: Some(37),
-                after_stop_boundary: false,
-            })
+            9,
+            4,
+            &[1, 2, 3, 4],
+            Some(37),
+            false,
         );
+        assert_eq!(metadata.packet_revision, 0);
+        assert_eq!(
+            metadata.packet_disposition,
+            StreamingPcmChunkDisposition::New
+        );
+        assert_eq!(metadata.wire_payload_bytes, 4);
+        assert_eq!(metadata.declared_pcm_bytes, 4);
+        assert_eq!(metadata.expanded_pcm_bytes, 4);
+        assert_eq!(
+            metadata.emitted_range,
+            StreamingPcmRange { start: 0, end: 4 }
+        );
+        assert!(!metadata.revision_conflict);
     }
 
     #[test]
@@ -1587,7 +2250,7 @@ mod tests {
                 origin: SessionStartOrigin::User,
             }
         );
-        assert_eq!(
+        let metadata = assert_streaming_chunk(
             collector
                 .handle_notification(&packet(
                     PacketType::AudioData,
@@ -1597,13 +2260,18 @@ mod tests {
                     Some(expected.len() as u16),
                 ))
                 .expect("audio"),
-            StreamingSessionEvent::PcmChunk(StreamingPcmChunk {
-                session_id: 152,
-                packet_sequence: 0,
-                pcm: expected.clone(),
-                raw_input_level_percent: None,
-                after_stop_boundary: false,
-            })
+            152,
+            0,
+            &expected,
+            None,
+            false,
+        );
+        assert_eq!(metadata.wire_payload_bytes, payload.len());
+        assert_eq!(metadata.declared_pcm_bytes, expected.len());
+        assert_eq!(metadata.expanded_pcm_bytes, expected.len());
+        assert_eq!(
+            metadata.emitted_range,
+            StreamingPcmRange { start: 0, end: 8 }
         );
         assert_eq!(collector.inner().reconstructed_pcm(), expected);
     }
@@ -1727,25 +2395,25 @@ mod tests {
                 origin: SessionStartOrigin::User,
             }
         );
+        let chunk_0_metadata = assert_streaming_chunk(chunk_0, 205, 0, &[1, 2], None, false);
+        let chunk_1_metadata = assert_streaming_chunk(chunk_1, 205, 1, &[3, 4], None, false);
+        assert_eq!(chunk_0_metadata.emission_ordinal, 0);
+        assert_eq!(chunk_1_metadata.emission_ordinal, 1);
         assert_eq!(
-            chunk_0,
-            StreamingSessionEvent::PcmChunk(StreamingPcmChunk {
-                session_id: 205,
-                packet_sequence: 0,
-                pcm: vec![1, 2],
-                raw_input_level_percent: None,
-                after_stop_boundary: false,
-            })
+            chunk_0_metadata.emitted_range,
+            StreamingPcmRange { start: 0, end: 2 }
         );
         assert_eq!(
-            chunk_1,
-            StreamingSessionEvent::PcmChunk(StreamingPcmChunk {
-                session_id: 205,
-                packet_sequence: 1,
-                pcm: vec![3, 4],
-                raw_input_level_percent: None,
-                after_stop_boundary: false,
-            })
+            chunk_1_metadata.emitted_range,
+            StreamingPcmRange { start: 2, end: 4 }
+        );
+        assert_eq!(
+            chunk_0_metadata.segment_ordinal,
+            chunk_1_metadata.segment_ordinal
+        );
+        assert_eq!(
+            chunk_0_metadata.collector_instance_id,
+            chunk_1_metadata.collector_instance_id
         );
         assert_eq!(
             stopped,
@@ -1755,6 +2423,41 @@ mod tests {
                 origin: SessionStopOrigin::User,
             }
         );
+        assert!(collector.inner().has_successful_complete_session());
+        assert_eq!(collector.inner().reconstructed_pcm(), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn streaming_out_of_order_emission_keeps_final_reconstruction_distinct() {
+        let mut collector = StreamingSessionCollector::default();
+
+        collector
+            .handle_notification(&packet(PacketType::SessionStart, 211, 0, &[], Some(0)))
+            .expect("start");
+        let sequence_one = collector
+            .handle_notification(&packet(PacketType::AudioData, 211, 1, &[3, 4], None))
+            .expect("audio 1");
+        let sequence_zero = collector
+            .handle_notification(&packet(PacketType::AudioData, 211, 0, &[1, 2], None))
+            .expect("audio 0");
+        collector
+            .handle_notification(&packet(PacketType::SessionStop, 211, 2, &[], Some(0)))
+            .expect("stop");
+
+        let sequence_one_metadata =
+            assert_streaming_chunk(sequence_one, 211, 1, &[3, 4], None, false);
+        let sequence_zero_metadata =
+            assert_streaming_chunk(sequence_zero, 211, 0, &[1, 2], None, false);
+        assert_eq!(
+            sequence_one_metadata.emitted_range,
+            StreamingPcmRange { start: 0, end: 2 }
+        );
+        assert_eq!(
+            sequence_zero_metadata.emitted_range,
+            StreamingPcmRange { start: 2, end: 4 }
+        );
+        assert_eq!(sequence_one_metadata.emission_ordinal, 0);
+        assert_eq!(sequence_zero_metadata.emission_ordinal, 1);
         assert!(collector.inner().has_successful_complete_session());
         assert_eq!(collector.inner().reconstructed_pcm(), vec![1, 2, 3, 4]);
     }
@@ -1851,16 +2554,13 @@ mod tests {
             .handle_notification(&packet(PacketType::AudioData, 209, 1, &[3, 4], None))
             .expect("tail audio");
 
+        let tail_metadata = assert_streaming_chunk(tail, 209, 1, &[3, 4], None, true);
         assert_eq!(
-            tail,
-            StreamingSessionEvent::PcmChunk(StreamingPcmChunk {
-                session_id: 209,
-                packet_sequence: 1,
-                pcm: vec![3, 4],
-                raw_input_level_percent: None,
-                after_stop_boundary: true,
-            })
+            tail_metadata.emitted_range,
+            StreamingPcmRange { start: 2, end: 4 }
         );
+        assert!(tail_metadata.previous_emission_ordinal.is_none());
+        assert!(!tail_metadata.revision_conflict);
         assert!(collector.inner().has_successful_complete_session());
         assert_eq!(collector.inner().reconstructed_pcm(), vec![1, 2, 3, 4]);
         assert_eq!(
@@ -1878,6 +2578,214 @@ mod tests {
             stats.post_stop_duration_seconds,
             2.0 / PCM_BYTES_PER_SECOND as f64
         );
+    }
+
+    #[test]
+    fn streaming_replacement_after_stop_keeps_conflict_and_boundary_facts() {
+        let mut collector = StreamingSessionCollector::default();
+
+        collector
+            .handle_notification(&packet(PacketType::SessionStart, 212, 0, &[], Some(0)))
+            .expect("start");
+        collector
+            .handle_notification(&packet(PacketType::AudioData, 212, 0, &[1, 2], None))
+            .expect("initial audio");
+        collector
+            .handle_notification(&packet(PacketType::SessionStop, 212, 1, &[], Some(0)))
+            .expect("stop");
+        let replacement = collector
+            .handle_notification(&packet(PacketType::AudioData, 212, 0, &[1, 2, 3, 4], None))
+            .expect("replacement after stop");
+
+        let metadata = assert_streaming_chunk(replacement, 212, 0, &[1, 2, 3, 4], None, true);
+        assert_eq!(metadata.packet_revision, 1);
+        assert_eq!(
+            metadata.packet_disposition,
+            StreamingPcmChunkDisposition::Replacement
+        );
+        assert_eq!(metadata.previous_emission_ordinal, Some(0));
+        assert_eq!(
+            metadata.previous_emitted_range,
+            Some(StreamingPcmRange { start: 0, end: 2 })
+        );
+        assert!(metadata.revision_conflict);
+        assert_eq!(collector.inner().reconstructed_pcm(), vec![1, 2, 3, 4]);
+        assert_eq!(
+            collector.inner().reconstructed_asr_boundary_pcm(),
+            vec![1, 2]
+        );
+    }
+
+    #[test]
+    fn streaming_reset_rejects_late_old_session_packets() {
+        let mut collector = StreamingSessionCollector::default();
+
+        collector
+            .handle_notification(&packet(PacketType::SessionStart, 213, 0, &[], Some(0)))
+            .expect("old start");
+        collector
+            .handle_notification(&packet(PacketType::AudioData, 213, 0, &[1, 2], None))
+            .expect("old audio");
+        collector.reset();
+        collector
+            .handle_notification(&packet(PacketType::SessionStart, 214, 0, &[], Some(0)))
+            .expect("new start");
+
+        let late_old = collector
+            .handle_notification(&packet(PacketType::AudioData, 213, 1, &[9, 9], None))
+            .expect("late old audio");
+        assert_eq!(
+            late_old,
+            StreamingSessionEvent::Ignored(IgnoredPacketReason::ForeignSession)
+        );
+
+        let new_audio = collector
+            .handle_notification(&packet(PacketType::AudioData, 214, 0, &[3, 4], None))
+            .expect("new audio");
+        let metadata = assert_streaming_chunk(new_audio, 214, 0, &[3, 4], None, false);
+        assert_eq!(metadata.segment_ordinal, 2);
+        assert_eq!(
+            metadata.emitted_range,
+            StreamingPcmRange { start: 0, end: 2 }
+        );
+    }
+
+    #[test]
+    fn streaming_reset_starts_a_new_metadata_segment_even_when_id_repeats() {
+        let mut collector = StreamingSessionCollector::default();
+
+        collector
+            .handle_notification(&packet(PacketType::SessionStart, 215, 0, &[], Some(0)))
+            .expect("first start");
+        collector
+            .handle_notification(&packet(PacketType::AudioData, 215, 0, &[1, 2], None))
+            .expect("first audio");
+        let first_segment = collector.segment_ordinal;
+        collector.reset();
+        collector
+            .handle_notification(&packet(PacketType::SessionStart, 215, 0, &[], Some(0)))
+            .expect("repeated-id start after reset");
+
+        let second_audio = collector
+            .handle_notification(&packet(PacketType::AudioData, 215, 0, &[3, 4], None))
+            .expect("second audio");
+        let metadata = assert_streaming_chunk(second_audio, 215, 0, &[3, 4], None, false);
+        assert_eq!(metadata.segment_ordinal, first_segment + 1);
+        assert_eq!(metadata.packet_revision, 0);
+        assert_eq!(
+            metadata.emitted_range,
+            StreamingPcmRange { start: 0, end: 2 }
+        );
+        assert!(!metadata.revision_conflict);
+    }
+
+    #[test]
+    fn same_id_session_start_does_not_invent_metadata_reset_before_or_after_terminal() {
+        let mut before_terminal = StreamingSessionCollector::default();
+        before_terminal
+            .handle_notification(&packet(PacketType::SessionStart, 217, 0, &[], Some(0)))
+            .expect("start");
+        before_terminal
+            .handle_notification(&packet(PacketType::AudioData, 217, 0, &[1, 2], None))
+            .expect("first audio");
+        before_terminal
+            .handle_notification(&packet(PacketType::SessionStart, 217, 0, &[], Some(0)))
+            .expect("duplicate start");
+        let before_replacement = before_terminal
+            .handle_notification(&packet(PacketType::AudioData, 217, 0, &[1, 2, 3, 4], None))
+            .expect("replacement");
+        let before_metadata =
+            assert_streaming_chunk(before_replacement, 217, 0, &[1, 2, 3, 4], None, false);
+        assert_eq!(before_metadata.segment_ordinal, 1);
+        assert_eq!(before_metadata.packet_revision, 1);
+        assert!(before_metadata.revision_conflict);
+
+        let mut after_terminal = StreamingSessionCollector::default();
+        after_terminal
+            .handle_notification(&packet(PacketType::SessionStart, 218, 0, &[], Some(0)))
+            .expect("start");
+        after_terminal
+            .handle_notification(&packet(PacketType::AudioData, 218, 0, &[1, 2], None))
+            .expect("first audio");
+        after_terminal
+            .handle_notification(&packet(PacketType::SessionStop, 218, 1, &[], Some(0)))
+            .expect("stop");
+        after_terminal
+            .handle_notification(&packet(PacketType::SessionStart, 218, 0, &[], Some(0)))
+            .expect("duplicate start after terminal");
+        let after_replacement = after_terminal
+            .handle_notification(&packet(PacketType::AudioData, 218, 0, &[1, 2, 3, 4], None))
+            .expect("replacement after duplicate start");
+        let after_metadata =
+            assert_streaming_chunk(after_replacement, 218, 0, &[1, 2, 3, 4], None, true);
+        assert_eq!(after_metadata.segment_ordinal, 1);
+        assert_eq!(after_metadata.packet_revision, 1);
+        assert!(after_metadata.revision_conflict);
+    }
+
+    #[test]
+    fn request_tagged_ensure_marker_preserves_running_segment_before_terminal() {
+        let mut collector = StreamingSessionCollector::default();
+        let marker_origin = SessionStartOrigin::Unknown(0x8007);
+
+        collector
+            .handle_notification(&build_session_start_notification(219))
+            .expect("start");
+        collector
+            .handle_notification(&packet(PacketType::AudioData, 219, 0, &[1, 2], None))
+            .expect("initial audio");
+        let first_segment = collector.segment_ordinal;
+
+        assert_eq!(
+            collector
+                .handle_notification(&build_session_start_notification_with_origin(
+                    219,
+                    marker_origin,
+                ))
+                .expect("ENSURE marker"),
+            StreamingSessionEvent::Started {
+                session_id: 219,
+                origin: marker_origin,
+            }
+        );
+
+        let continued = collector
+            .handle_notification(&packet(PacketType::AudioData, 219, 1, &[3, 4], None))
+            .expect("continued audio");
+        let continued_metadata =
+            assert_streaming_chunk(continued, 219, 1, &[3, 4], None, false);
+        assert_eq!(continued_metadata.segment_ordinal, first_segment);
+        assert_eq!(
+            continued_metadata.emitted_range,
+            StreamingPcmRange { start: 2, end: 4 }
+        );
+        assert_eq!(collector.inner().reconstructed_pcm(), vec![1, 2, 3, 4]);
+
+        collector
+            .handle_notification(&packet(PacketType::SessionStop, 219, 2, &[], Some(0)))
+            .expect("stop");
+    }
+
+    #[test]
+    fn streaming_metadata_overflow_is_incomplete_without_dropping_pcm() {
+        let mut collector = StreamingSessionCollector::default();
+        collector
+            .handle_notification(&packet(PacketType::AudioData, 216, 0, &[1, 2], None))
+            .expect("initial audio");
+        collector.segment_emitted_pcm_bytes = u64::MAX;
+
+        let event = collector
+            .handle_notification(&packet(PacketType::AudioData, 216, 1, &[3, 4], None))
+            .expect("overflow audio");
+        let metadata = assert_streaming_chunk(event, 216, 1, &[3, 4], None, false);
+        assert_eq!(
+            metadata.emitted_range,
+            StreamingPcmRange {
+                start: u64::MAX,
+                end: u64::MAX
+            }
+        );
+        assert!(metadata.metadata_incomplete);
     }
 
     #[test]
@@ -1917,16 +2825,19 @@ mod tests {
             .handle_notification(&packet(PacketType::AudioData, 206, 0, &[9], None))
             .expect("audio duplicate");
 
+        let replacement_metadata =
+            assert_streaming_chunk(replacement, 206, 0, &[1, 2, 3, 4], None, false);
+        assert_eq!(replacement_metadata.packet_revision, 1);
         assert_eq!(
-            replacement,
-            StreamingSessionEvent::PcmChunk(StreamingPcmChunk {
-                session_id: 206,
-                packet_sequence: 0,
-                pcm: vec![1, 2, 3, 4],
-                raw_input_level_percent: None,
-                after_stop_boundary: false,
-            })
+            replacement_metadata.packet_disposition,
+            StreamingPcmChunkDisposition::Replacement
         );
+        assert_eq!(
+            replacement_metadata.previous_emitted_range,
+            Some(StreamingPcmRange { start: 0, end: 2 })
+        );
+        assert_eq!(replacement_metadata.previous_emission_ordinal, Some(0));
+        assert!(replacement_metadata.revision_conflict);
         assert_eq!(
             duplicate,
             StreamingSessionEvent::Ignored(IgnoredPacketReason::DuplicateOrShorterPacket)
@@ -1934,6 +2845,282 @@ mod tests {
         assert_eq!(collector.inner().reconstructed_pcm(), vec![1, 2, 3, 4]);
         assert_eq!(collector.inner().stats().replaced_packet_count, 1);
         assert_eq!(collector.inner().stats().duplicate_packet_count, 1);
+    }
+
+    #[test]
+    fn session_collector_exposes_shared_revision_receipts_without_changing_admission() {
+        let mut collector = SessionCollector::default();
+        let collector_instance_id = collector.collector_instance_id();
+
+        let start = collector
+            .handle_notification(&build_session_start_notification(217))
+            .expect("start");
+        assert_eq!(
+            start,
+            SessionEvent::Started {
+                session_id: 217,
+                origin: SessionStartOrigin::User,
+            }
+        );
+        let start_fact = collector
+            .last_admission_fact()
+            .expect("start admission fact");
+        assert_eq!(start_fact.collector_instance_id, collector_instance_id);
+        assert_eq!(start_fact.disposition, SessionAdmissionDisposition::New);
+        assert_eq!(collector.last_admission_receipt(), None);
+
+        collector
+            .handle_notification(&packet(PacketType::AudioData, 217, 0, &[1, 2], None))
+            .expect("initial audio");
+        let first_fact = collector.last_admission_fact().expect("initial audio fact");
+        let first_receipt = collector
+            .last_admission_receipt()
+            .expect("initial audio receipt");
+        let first_receipt_clone = first_receipt.clone();
+        assert!(first_receipt.same_reference(&first_receipt_clone));
+        assert_eq!(first_fact.disposition, SessionAdmissionDisposition::New);
+        assert_eq!(first_fact.reset_epoch, collector.reset_epoch());
+        assert_eq!(first_fact.supersedes_admission_id, None);
+        assert_eq!(first_fact.admission_id, Some(0));
+        assert_eq!(first_receipt.witness().admission_id, 0);
+        assert!(!first_receipt.witness().superseded);
+
+        collector
+            .handle_notification(&packet(PacketType::AudioData, 217, 0, &[1, 2, 3, 4], None))
+            .expect("larger replacement");
+        let replacement_fact = collector.last_admission_fact().expect("replacement fact");
+        let replacement_receipt = collector
+            .last_admission_receipt()
+            .expect("replacement receipt");
+        assert!(!first_receipt.same_reference(&replacement_receipt));
+        assert_eq!(
+            replacement_fact.disposition,
+            SessionAdmissionDisposition::Replacement
+        );
+        assert_eq!(replacement_fact.supersedes_admission_id, Some(0));
+        assert_eq!(replacement_fact.admission_id, Some(1));
+        assert_eq!(replacement_receipt.witness().admission_id, 1);
+        assert!(!replacement_receipt.witness().superseded);
+        let first_witness = first_receipt.witness();
+        assert!(first_witness.superseded);
+        assert_eq!(first_witness.superseded_by_admission_id, Some(1));
+        assert_eq!(first_witness.superseded_by_notification_id, Some(2));
+
+        let duplicate = collector
+            .handle_notification(&packet(PacketType::AudioData, 217, 0, &[9], None))
+            .expect("short duplicate");
+        assert_eq!(
+            duplicate,
+            SessionEvent::Ignored(IgnoredPacketReason::DuplicateOrShorterPacket)
+        );
+        let duplicate_fact = collector.last_admission_fact().expect("duplicate fact");
+        assert_eq!(
+            duplicate_fact.disposition,
+            SessionAdmissionDisposition::Ignored(IgnoredPacketReason::DuplicateOrShorterPacket)
+        );
+        assert_eq!(collector.last_admission_receipt(), None);
+
+        collector
+            .handle_notification(&build_session_stop_notification(217, 1))
+            .expect("stop");
+        let terminal_fact = collector.last_admission_fact().expect("terminal fact");
+        assert_eq!(
+            terminal_fact.disposition,
+            SessionAdmissionDisposition::Terminal
+        );
+        assert_eq!(collector.last_admission_receipt(), None);
+
+        collector.reset();
+        let old_reset_epoch = first_witness.reset_epoch;
+        let reset_epoch_before_same_id_audio = collector.reset_epoch();
+        assert!(reset_epoch_before_same_id_audio > old_reset_epoch);
+        collector
+            .handle_notification(&packet(PacketType::AudioData, 217, 0, &[5, 6, 7, 8], None))
+            .expect("same id after reset");
+        let new_fact = collector.last_admission_fact().expect("new epoch fact");
+        let new_receipt = collector
+            .last_admission_receipt()
+            .expect("new epoch receipt");
+        let new_epoch = collector.reset_epoch();
+        assert_eq!(new_fact.disposition, SessionAdmissionDisposition::New);
+        assert_eq!(new_fact.supersedes_admission_id, None);
+        assert_eq!(new_receipt.witness().reset_epoch, new_epoch);
+        assert!(!new_receipt.witness().superseded);
+        assert!(!first_receipt.witness().superseded_by_admission_id.is_none());
+
+        let parse_error = collector.handle_notification(&[0, 1, 2]);
+        assert!(parse_error.is_err());
+        let parse_fact = collector
+            .last_admission_fact()
+            .expect("parse rejection fact");
+        assert_eq!(
+            parse_fact.disposition,
+            SessionAdmissionDisposition::ParseRejected
+        );
+        assert_eq!(collector.last_admission_receipt(), None);
+    }
+
+    #[test]
+    fn foreign_terminal_packets_each_publish_their_own_ignored_fact() {
+        let mut collector = SessionCollector::default();
+        collector
+            .handle_notification(&build_session_start_notification(301))
+            .expect("start");
+        collector
+            .handle_notification(&packet(PacketType::AudioData, 301, 0, &[1, 2], None))
+            .expect("audio");
+        let old_receipt = collector
+            .last_admission_receipt()
+            .expect("accepted audio receipt");
+        let old_witness = old_receipt.witness();
+
+        let foreign_packets = [
+            build_session_stop_notification(302, 1),
+            build_session_cancel_notification(302, 1),
+            build_session_error_notification(302, 1, SessionErrorCode::LinkLost),
+        ];
+        for (index, foreign_packet) in foreign_packets.iter().enumerate() {
+            let event = collector
+                .handle_notification(foreign_packet)
+                .expect("foreign control packet parses");
+            assert_eq!(
+                event,
+                SessionEvent::Ignored(IgnoredPacketReason::ForeignSession)
+            );
+            let fact = collector
+                .last_admission_fact()
+                .expect("foreign control admission fact");
+            assert_eq!(fact.notification_id, Some((2 + index) as u64));
+            assert_eq!(fact.physical_session_id, Some(302));
+            assert_eq!(fact.packet_sequence, Some(1));
+            assert_eq!(
+                fact.disposition,
+                SessionAdmissionDisposition::Ignored(IgnoredPacketReason::ForeignSession,)
+            );
+            assert_eq!(collector.last_admission_receipt(), None);
+            assert_eq!(old_receipt.witness(), old_witness);
+        }
+    }
+
+    #[test]
+    fn replacement_fact_survives_predecessor_receipt_eviction() {
+        let mut collector = SessionCollector::default();
+        collector
+            .handle_notification(&build_session_start_notification(302))
+            .expect("start");
+        collector
+            .handle_notification(&packet(PacketType::AudioData, 302, 0, &[1, 2], None))
+            .expect("initial audio");
+        let evicted_receipt = collector.last_admission_receipt().expect("initial receipt");
+
+        for sequence in 1..=(SESSION_ADMISSION_RECEIPT_CAPACITY as u16) {
+            collector
+                .handle_notification(&packet(PacketType::AudioData, 302, sequence, &[3, 4], None))
+                .expect("fill receipt ledger");
+        }
+        assert!(evicted_receipt.witness().metadata_incomplete);
+
+        collector
+            .handle_notification(&packet(PacketType::AudioData, 302, 0, &[1, 2, 3, 4], None))
+            .expect("replacement after predecessor eviction");
+        let fact = collector.last_admission_fact().expect("replacement fact");
+        assert_eq!(fact.disposition, SessionAdmissionDisposition::Replacement);
+        assert_eq!(fact.supersedes_admission_id, None);
+        assert!(fact.predecessor_unknown);
+        assert!(fact.metadata_incomplete);
+        assert_eq!(collector.stats().replaced_packet_count, 1);
+    }
+
+    #[test]
+    fn admission_and_notification_id_exhaustion_becomes_sticky_unknown() {
+        let mut collector = SessionCollector::default();
+        collector.next_notification_id = Some(u64::MAX);
+        collector
+            .handle_notification(&build_session_start_notification(303))
+            .expect("max notification id still has one unique use");
+        let max_fact = collector.last_admission_fact().expect("max id fact");
+        assert_eq!(max_fact.notification_id, Some(u64::MAX));
+        collector
+            .handle_notification(&build_session_stop_notification(303, 0))
+            .expect("exhausted notification id remains parseable");
+        let unknown_fact = collector.last_admission_fact().expect("unknown id fact");
+        assert_eq!(unknown_fact.notification_id, None);
+        assert!(unknown_fact.metadata_incomplete);
+        collector
+            .handle_notification(&build_session_cancel_notification(303, 0))
+            .expect("unknown notification id remains sticky");
+        assert_eq!(
+            collector.last_admission_fact().unwrap().notification_id,
+            None
+        );
+
+        let mut admissions = SessionCollector::default();
+        admissions.next_admission_id = Some(u64::MAX);
+        admissions
+            .handle_notification(&packet(PacketType::AudioData, 304, 0, &[1, 2], None))
+            .expect("max admission id still has one unique use");
+        let max_admission = admissions
+            .last_admission_fact()
+            .expect("max admission fact");
+        assert_eq!(max_admission.admission_id, Some(u64::MAX));
+        assert!(admissions.last_admission_receipt().is_some());
+        admissions
+            .handle_notification(&packet(PacketType::AudioData, 304, 1, &[3, 4], None))
+            .expect("exhausted admission id still accepts PCM");
+        let unknown_admission = admissions
+            .last_admission_fact()
+            .expect("unknown admission fact");
+        assert_eq!(unknown_admission.admission_id, None);
+        assert!(unknown_admission.metadata_incomplete);
+        assert_eq!(admissions.last_admission_receipt(), None);
+        admissions
+            .handle_notification(&packet(PacketType::AudioData, 304, 2, &[5, 6], None))
+            .expect("unknown admission remains sticky");
+        assert_eq!(admissions.last_admission_fact().unwrap().admission_id, None);
+    }
+
+    #[test]
+    fn collector_instance_and_reset_epoch_exhaustion_stay_unknown() {
+        let counter = AtomicU64::new(u64::MAX);
+        assert_eq!(allocate_collector_instance_id(&counter), Some(u64::MAX));
+        assert_eq!(allocate_collector_instance_id(&counter), None);
+        assert_eq!(allocate_collector_instance_id(&counter), None);
+
+        let mut collector = SessionCollector::default();
+        collector.reset_epoch = Some(u64::MAX);
+        collector.reset();
+        assert_eq!(collector.reset_epoch(), None);
+        collector.reset();
+        assert_eq!(collector.reset_epoch(), None);
+        collector
+            .handle_notification(&packet(PacketType::AudioData, 305, 0, &[1, 2], None))
+            .expect("PCM remains accepted after epoch exhaustion");
+        assert_eq!(collector.last_admission_fact().unwrap().reset_epoch, None);
+        assert!(collector.last_admission_fact().unwrap().metadata_incomplete);
+    }
+
+    #[test]
+    fn admission_fact_expanded_length_matches_proven_expansion_span() {
+        let mut collector = SessionCollector::default();
+        collector
+            .handle_notification(&packet(PacketType::AudioData, 306, 0, &[1, 2], Some(8)))
+            .expect("short payload with declared expansion span");
+        let fact = collector.last_admission_fact().expect("expanded fact");
+        assert_eq!(fact.wire_payload_bytes, 2);
+        assert_eq!(fact.declared_pcm_bytes, 8);
+        assert_eq!(fact.expanded_pcm_bytes, 8);
+        assert_eq!(collector.received_pcm_bytes(), 2);
+
+        let mut streaming = StreamingSessionCollector::default();
+        let event = streaming.handle_packet(
+            parse_packet(&packet(PacketType::AudioData, 307, 0, &[1, 2], Some(8)))
+                .expect("streaming packet"),
+        );
+        let StreamingSessionEvent::PcmChunk(chunk) = event else {
+            panic!("expected expanded streaming chunk");
+        };
+        assert_eq!(chunk.pcm.len(), 8);
+        assert_eq!(chunk.metadata.unwrap().expanded_pcm_bytes, 8);
     }
 
     #[test]
