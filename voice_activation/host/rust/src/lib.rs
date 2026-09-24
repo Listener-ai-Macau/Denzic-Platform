@@ -101,6 +101,29 @@ fn phonetic_phrase_units(value: &str) -> Vec<String> {
         .collect()
 }
 
+// Local ASR occasionally repeats one wake syllable ("开始录录音"). Accept
+// that exact insertion only beside the phrase and only near the beginning of
+// the search window. Other one-edit neighbours remain Absent, preserving the
+// ordinary phrase gate for room speech.
+fn single_repeated_phrase_unit_start(transcript: &[String], phrase: &[String]) -> Option<usize> {
+    let window_len = phrase.len().checked_add(1)?;
+    if phrase.len() < 2 || transcript.len() < window_len {
+        return None;
+    }
+    for start in 0..=transcript.len().saturating_sub(window_len).min(2) {
+        let window = &transcript[start..start + window_len];
+        for repeated_at in 0..phrase.len() {
+            if window[..=repeated_at] == phrase[..=repeated_at]
+                && window[repeated_at + 1] == phrase[repeated_at]
+                && window[repeated_at + 2..] == phrase[repeated_at + 1..]
+            {
+                return Some(start);
+            }
+        }
+    }
+    None
+}
+
 pub fn local_transcript_phrase_relation(transcript: &str, phrase: &str) -> LocalPhraseRelation {
     let phrase = normalized_phrase_text(phrase);
     if phrase.is_empty() {
@@ -118,6 +141,14 @@ pub fn local_transcript_phrase_relation(transcript: &str, phrase: &str) -> Local
             LocalPhraseRelation::PhoneticStart
         } else if transcript.contains(&phrase) {
             LocalPhraseRelation::PresentLater
+        } else if let Some(start) =
+            single_repeated_phrase_unit_start(&transcript_units, &phrase_units)
+        {
+            if start == 0 {
+                LocalPhraseRelation::PhoneticStart
+            } else {
+                LocalPhraseRelation::PresentLater
+            }
         } else {
             LocalPhraseRelation::Absent
         }
@@ -644,6 +675,18 @@ mod tests {
         assert_eq!(
             local_transcript_phrase_relation("请说开始录音", "开始录音"),
             LocalPhraseRelation::PresentLater
+        );
+        assert_eq!(
+            local_transcript_phrase_relation("嗯开始录录音所以什么意思", "开始录音"),
+            LocalPhraseRelation::PresentLater
+        );
+        assert_eq!(
+            local_transcript_phrase_relation("开始录录音然后继续", "开始录音"),
+            LocalPhraseRelation::PhoneticStart
+        );
+        assert_eq!(
+            local_transcript_phrase_relation("开始录错音然后继续", "开始录音"),
+            LocalPhraseRelation::Absent
         );
         assert_eq!(
             local_transcript_phrase_relation("普通说话", "开始录音"),
