@@ -255,6 +255,7 @@ dependencies = [
 name = "denzic-host-audio-v1-core"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "cpal",
  "reqwest",
  "serde_json",

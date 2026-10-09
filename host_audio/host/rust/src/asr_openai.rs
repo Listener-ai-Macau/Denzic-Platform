@@ -12,9 +12,10 @@ use std::time::Duration;
 use reqwest::blocking::multipart;
 
 use crate::asr::{
-    extract_text_from_asr_body, normalize_transcript, AsrError, AsrErrorKind, AsrTranscript,
+    normalize_transcript, AsrError, AsrErrorKind, AsrTranscript,
     BatchAsrProvider,
 };
+use crate::http_policy::{self, Failure};
 use crate::{
     ASR_DEFAULT_MAX_UPLOAD_BYTES, ASR_DEFAULT_MODEL, ASR_OPENAI_TRANSCRIPTION_ENDPOINT,
     ASR_REQUEST_TIMEOUT_SECONDS,
@@ -69,6 +70,7 @@ impl BatchAsrProvider for OpenAiCompatibleAsr {
     }
 
     fn transcribe_file(&self, audio_path: &Path) -> Result<AsrTranscript, AsrError> {
+        let endpoint = http_policy::endpoint(&self.config.endpoint).map_err(safe_http_error)?;
         let audio: PathBuf = audio_path.to_path_buf();
         let bytes = fs::metadata(&audio)
             .map_err(|err| {
@@ -98,42 +100,27 @@ impl BatchAsrProvider for OpenAiCompatibleAsr {
                     format!("attach audio file {}: {err}", audio.display()),
                 )
             })?;
-        let response = reqwest::blocking::Client::builder()
-            .timeout(self.config.timeout)
-            .build()
-            .map_err(|err| {
-                AsrError::new(
-                    AsrErrorKind::Unavailable,
-                    format!("build ASR HTTP client: {err}"),
-                )
-            })?
-            .post(&self.config.endpoint)
+        let response = http_policy::client(self.config.timeout).map_err(safe_http_error)?
+            .post(endpoint)
             .bearer_auth(&self.config.api_key)
             .multipart(form)
             .send()
-            .map_err(|err| {
-                AsrError::retryable(
-                    AsrErrorKind::Network,
-                    format!("send ASR request to {}: {err}", self.config.endpoint),
-                )
-            })?;
+            .map_err(|error| safe_http_error(Failure::from_reqwest(error)))?;
         let status = response.status();
-        let body = response.text().map_err(|err| {
-            AsrError::new(
-                AsrErrorKind::Provider,
-                format!("read ASR response body: {err}"),
-            )
-        })?;
         if !status.is_success() {
-            let message = format!("ASR provider returned {status}: {}", body.trim());
+            let message = format!("ASR provider returned {status}");
             return Err(match status.as_u16() {
                 401 | 403 => AsrError::new(AsrErrorKind::Auth, message),
-                429 => AsrError::retryable(AsrErrorKind::RateLimited, message),
+                402 | 429 => AsrError::retryable(AsrErrorKind::RateLimited, message),
                 500..=599 => AsrError::retryable(AsrErrorKind::Provider, message),
                 _ => AsrError::new(AsrErrorKind::Provider, message),
             });
         }
-        let text = normalize_transcript(&extract_text_from_asr_body(&body));
+        let payload = http_policy::response_json(response, http_policy::MAX_RESPONSE_BYTES).map_err(safe_http_error)?;
+        let raw = payload.get("text").and_then(serde_json::Value::as_str)
+            .or_else(|| payload.pointer("/transcript/text").and_then(serde_json::Value::as_str))
+            .ok_or_else(|| safe_http_error(Failure::InvalidResponse))?;
+        let text = normalize_transcript(raw);
         if text.is_empty() {
             return Err(AsrError::new(
                 AsrErrorKind::Provider,
@@ -145,6 +132,15 @@ impl BatchAsrProvider for OpenAiCompatibleAsr {
             is_final: true,
         })
     }
+}
+
+fn safe_http_error(failure: Failure) -> AsrError {
+    let kind = match failure { Failure::Auth => AsrErrorKind::Auth, Failure::RateLimit => AsrErrorKind::RateLimited,
+        Failure::Timeout | Failure::Network => AsrErrorKind::Network, Failure::Configuration => AsrErrorKind::Unavailable,
+        _ => AsrErrorKind::Provider };
+    let mut error=AsrError::new(kind, format!("ASR request failed: {failure}"));
+    error.retryable=failure.retryable();
+    error
 }
 
 #[cfg(test)]

@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.77"
 
+[features]
+native-opus = ["dep:cc"]
+
+[build-dependencies]
+cc = { version = "1", optional = true }
+
 [lib]
 path = "src/lib.rs"
 
@@ -12,3 +18,12 @@ cpal = "0.15"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "multipart", "rustls-tls"] }
 serde_json = "1"
 thiserror = "1"
+
+[[example]]
+name = "compress_wav_half_ima"
+
+
+[[example]]
+name = "decode_cop1"
+path = "examples/decode_cop1.rs"
+
