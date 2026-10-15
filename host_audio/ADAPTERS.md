@@ -29,6 +29,11 @@ stays in the platform and what product adapters must inject.
 - `host/rust/src/asr_openai.rs` — the OpenAI-compatible batch client
   (multipart `POST /v1/audio/transcriptions`), including upload-limit
   enforcement and HTTP-to-`AsrErrorKind` mapping.
+- `host/rust/src/ima_adpcm.rs` — Companion-compatible IMA-ADPCM encode/decode,
+  half-rate 8 kHz path (`compress_pcm16k_half_ima` /
+  `decompress_half_ima_to_pcm16k`), and recording-capacity constants for
+  compress-at-record planning. Firmware keeps the C twin
+  (`companion_ima_adpcm.*`); host products must not reimplement a second codec.
 
 ## What product adapters own
 

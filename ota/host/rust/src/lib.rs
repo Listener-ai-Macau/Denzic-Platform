@@ -186,12 +186,14 @@ pub struct TransferReport {
 }
 
 impl TransferReport {
-    /// Payload bytes per second over the whole run, including windows that
-    /// were recovered or resent. Returns `None` when no time was measured.
+    /// Newly accepted payload bytes per second over the whole run. Waiting
+    /// and resends remain in elapsed time; a pre-existing prefix adds no bytes.
+    /// Returns `None` for no new payload, invalid counters, or no measured time.
     pub fn average_payload_bytes_per_second(&self) -> Option<f64> {
+        let new_bytes = self.firmware_bytes.checked_sub(self.resumed_bytes)?;
         let seconds = self.timings.total.as_secs_f64();
-        if seconds > 0.0 {
-            Some(self.firmware_bytes as f64 / seconds)
+        if new_bytes > 0 && seconds > 0.0 {
+            Some(new_bytes as f64 / seconds)
         } else {
             None
         }
@@ -490,6 +492,8 @@ impl<'a, T: OtaV1Transport, C: OtaClock> OtaTransferEngine<'a, T, C> {
             validate_receiving_status(status, expected_size)
                 .map_err(|error| self.fail_abort(TransferPhase::Device, error))?;
             let mut device_offset = status.bytes_written as usize;
+            validate_window_receipt(device_offset, window_start, send_offset)
+                .map_err(|error| self.fail_abort(TransferPhase::Device, error))?;
             // Host WWR "Success" can complete before flash catches up. A few
             // single-shot status polls (not nested 5-attempt retries) absorb lag
             // without exploding status_read count.
@@ -498,25 +502,22 @@ impl<'a, T: OtaV1Transport, C: OtaClock> OtaTransferEngine<'a, T, C> {
                 catch_up = catch_up.saturating_add(1);
                 self.timed_status_retry_wait(catch_up);
                 self.report.status_reads += 1;
-                match self
-                    .timed_status_read()
-                    .and_then(|bytes| parse_status(&bytes))
-                {
-                    Ok(next) if validate_receiving_status(next, expected_size).is_ok() => {
-                        status = next;
-                        device_offset = status.bytes_written as usize;
-                    }
-                    Ok(_) | Err(_) => break,
-                }
-            }
-            if device_offset > firmware.len() {
-                return Err(self.fail_abort(
-                    TransferPhase::Device,
-                    format!(
-                        "device reported offset {device_offset} beyond image size {}",
-                        firmware.len()
-                    ),
-                ));
+                // A temporary transport failure can defer catch-up using the
+                // last validated partial receipt. A received fatal/malformed
+                // receipt cannot be discarded and later treated as success.
+                let bytes = match self.timed_status_read() {
+                    Ok(bytes) => bytes,
+                    Err(_) => break,
+                };
+                let next = parse_status(&bytes)
+                    .map_err(|error| self.fail_abort(TransferPhase::StatusRead, error))?;
+                validate_receiving_status(next, expected_size)
+                    .map_err(|error| self.fail_abort(TransferPhase::Device, error))?;
+                let next_offset = next.bytes_written as usize;
+                validate_window_receipt(next_offset, window_start, send_offset)
+                    .map_err(|error| self.fail_abort(TransferPhase::Device, error))?;
+                status = next;
+                device_offset = next_offset;
             }
             let link_just_became_active = !active_link_confirmed && status.active_link_confirmed();
             active_link_confirmed = status.active_link_confirmed();
@@ -692,6 +693,16 @@ fn limited_window(configured: u16, active_link: bool, inactive_limit: Option<u16
     }
 }
 
+fn validate_window_receipt(offset: usize, confirmed: usize, sent: usize) -> Result<(), String> {
+    if offset < confirmed {
+        return Err(format!("device reported offset {offset} below confirmed offset {confirmed}"));
+    }
+    if offset > sent {
+        return Err(format!("device reported offset {offset} beyond sent window {confirmed}..{sent}"));
+    }
+    Ok(())
+}
+
 fn validate_receiving_status(status: OtaStatus, expected_size: u32) -> Result<(), String> {
     if status.expected_size != 0 && status.expected_size != expected_size {
         return Err(format!(
@@ -728,6 +739,14 @@ mod tests {
         Disconnect,
     }
 
+    enum StatusFault {
+        Cursor(u32),
+        Error(u8),
+        ImageSize(u32),
+        Malformed,
+        Unavailable,
+    }
+
     struct MockTransport {
         image: Vec<u8>,
         expected_size: u32,
@@ -745,6 +764,8 @@ mod tests {
         finished: bool,
         fail_finish: bool,
         link_events: Vec<LinkEvent>,
+        status_read_count: u32,
+        status_faults: Vec<(u32, StatusFault)>,
     }
 
     impl MockTransport {
@@ -766,6 +787,8 @@ mod tests {
                 finished: false,
                 fail_finish: false,
                 link_events: Vec::new(),
+                status_read_count: 0,
+                status_faults: Vec::new(),
             }
         }
 
@@ -838,11 +861,23 @@ mod tests {
         }
 
         fn read_status(&mut self) -> Result<Vec<u8>, String> {
+            self.status_read_count += 1;
             if self.transient_status_failures > 0 {
                 self.transient_status_failures -= 1;
                 return Err("transient GATT read".to_string());
             }
-            Ok(self.status_bytes())
+            let mut bytes = self.status_bytes();
+            for (read, fault) in &self.status_faults {
+                if *read != self.status_read_count { continue; }
+                match fault {
+                    StatusFault::Cursor(offset) => bytes[8..12].copy_from_slice(&offset.to_le_bytes()),
+                    StatusFault::Error(error) => {bytes[5] = STATE_ERROR;bytes[6] = *error;},
+                    StatusFault::ImageSize(size) => bytes[12..16].copy_from_slice(&size.to_le_bytes()),
+                    StatusFault::Malformed => bytes.truncate(7),
+                    StatusFault::Unavailable => return Err("temporary missing status".into()),
+                }
+            }
+            Ok(bytes)
         }
 
         fn write_finish(&mut self, packet: &[u8; CONTROL_BYTES]) -> Result<(), String> {
@@ -1015,6 +1050,65 @@ mod tests {
     }
 
     #[test]
+    fn window_receipts_cannot_confirm_unsent_bytes() {
+        for delayed in [false, true] {
+            let firmware: Vec<u8> = (0..31).collect();
+            let mut transport = MockTransport::new();
+            if delayed {transport.status_faults.push((2, StatusFault::Cursor(0)));}
+            transport.status_faults.push((if delayed {3} else {2}, StatusFault::Cursor(20)));
+            let mut progress = Vec::new();
+            let error = transfer(&mut transport, &firmware, options(), |done, _| progress.push(done)).unwrap_err();
+            assert_eq!(error.phase, TransferPhase::Device);
+            assert!(error.message.contains("sent window"));
+            assert_eq!(transport.writes, 3, "only the first15-byte window was sent");
+            assert_eq!(progress, vec![0], "no unsent bytes may enter progress or speed");
+            assert!(transport.aborted && !transport.finished);
+            assert_eq!(transport.link_events.last(), Some(&LinkEvent::Disconnect));
+        }
+    }
+
+    #[test]
+    fn a_receipt_cannot_rewind_an_already_confirmed_window() {
+        let firmware: Vec<u8> = (0..31).collect();
+        let mut transport = MockTransport::new();
+        transport.status_faults.push((3, StatusFault::Cursor(10)));
+        let mut progress = Vec::new();
+        let error = transfer(&mut transport, &firmware, options(), |done, _| progress.push(done)).unwrap_err();
+        assert_eq!(error.phase, TransferPhase::Device);
+        assert!(error.message.contains("confirmed offset 15"));
+        assert_eq!(progress, vec![0,15]);
+        assert!(transport.aborted && !transport.finished);
+    }
+
+    #[test]
+    fn catch_up_cannot_ignore_fatal_or_invalid_device_status() {
+        for fault in [StatusFault::Error(254),StatusFault::ImageSize(99),StatusFault::Malformed] {
+            let firmware: Vec<u8> = (0..31).collect();
+            let mut transport = MockTransport::new();
+            transport.status_faults.push((2, StatusFault::Cursor(0)));
+            let expected = if matches!(fault,StatusFault::Malformed) {TransferPhase::StatusRead} else {TransferPhase::Device};
+            transport.status_faults.push((3,fault));
+            let mut progress = Vec::new();
+            let error = transfer(&mut transport, &firmware, options(), |done, _| progress.push(done)).unwrap_err();
+            assert_eq!(error.phase,expected);
+            assert_eq!(progress,vec![0]);
+            assert_eq!(transport.writes,3);
+            assert!(transport.aborted && !transport.finished);
+        }
+    }
+
+    #[test]
+    fn a_missing_catch_up_read_preserves_the_last_valid_partial_receipt() {
+        let firmware: Vec<u8> = (0..31).collect();
+        let mut transport = MockTransport::new();
+        transport.status_faults.push((2,StatusFault::Cursor(0)));
+        transport.status_faults.push((3,StatusFault::Unavailable));
+        let report = transfer(&mut transport,&firmware,options(),|_,_|{}).unwrap();
+        assert_eq!(transport.image,firmware);
+        assert!(report.finish_confirmed && !transport.aborted);
+    }
+
+    #[test]
     fn resumes_an_existing_same_image_session_without_erasing_device_progress() {
         let firmware: Vec<u8> = (0..31).collect();
         let existing_bytes = 15usize;
@@ -1080,11 +1174,23 @@ mod tests {
         let rate = report
             .average_payload_bytes_per_second()
             .expect("a timed transfer must report a payload rate");
-        let expected_rate = 31.0 / timings.total.as_secs_f64();
+        let expected_rate = (31 - existing_bytes) as f64 / timings.total.as_secs_f64();
         assert!(
             (rate - expected_rate).abs() < f64::EPSILON,
-            "rate must derive from payload bytes over total elapsed"
+            "rate must count only newly accepted payload bytes over total elapsed"
         );
+    }
+
+    #[test]
+    fn no_new_payload_or_an_invalid_resume_has_no_numeric_rate() {
+        let firmware: Vec<u8> = (0..31).collect();
+        let mut transport = MockTransport::new();
+        let mut clock = FakeClock::new(Duration::from_millis(100));
+        let mut report = transfer_with_clock(&mut transport,&firmware,options(),&mut clock,|_,_|{}).unwrap();
+        for resumed in [31,32] {
+            report.resumed_bytes=resumed;
+            assert_eq!(report.average_payload_bytes_per_second(),None);
+        }
     }
 
     #[test]

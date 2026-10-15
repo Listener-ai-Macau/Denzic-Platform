@@ -11,9 +11,11 @@ mod generated;
 
 pub mod address;
 pub mod failure;
+pub mod resource;
 
 pub use address::*;
 pub use generated::*;
+pub use resource::ScopedBleResource;
 
 #[cfg(target_os = "windows")]
 mod device;
