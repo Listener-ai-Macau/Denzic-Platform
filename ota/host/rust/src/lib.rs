@@ -254,6 +254,13 @@ pub trait OtaV1Transport {
 
     fn status_retry_wait(&mut self, _attempt: u8) {}
 
+    /// A receiver may retain a complete bounded WWR window while a physical
+    /// erase is still running. Opt in to a monotonic drain deadline instead
+    /// of replaying after four quick polls. No DATA is sent during this wait;
+    /// only validated durable receipts advance the cursor. None retains the
+    /// existing four-poll policy for every other transport.
+    fn window_drain_timeout(&self) -> Option<Duration> { None }
+
     fn write_finish(&mut self, packet: &[u8; CONTROL_BYTES]) -> Result<(), String> {
         self.write_control(packet)
     }
@@ -498,7 +505,14 @@ impl<'a, T: OtaV1Transport, C: OtaClock> OtaTransferEngine<'a, T, C> {
             // single-shot status polls (not nested 5-attempt retries) absorb lag
             // without exploding status_read count.
             let mut catch_up = 0u8;
-            while device_offset < send_offset && catch_up < 4 {
+            let drain_deadline = self.transport.window_drain_timeout()
+                .map(|timeout| self.clock.now().saturating_add(timeout));
+            while device_offset < send_offset && catch_up < u8::MAX &&
+                match drain_deadline {
+                    Some(deadline) => self.clock.now() < deadline,
+                    None => catch_up < 4,
+                }
+            {
                 catch_up = catch_up.saturating_add(1);
                 self.timed_status_retry_wait(catch_up);
                 self.report.status_reads += 1;
@@ -790,6 +804,7 @@ mod tests {
         link_events: Vec<LinkEvent>,
         status_read_count: u32,
         status_faults: Vec<(u32, StatusFault)>,
+        drain_timeout: Option<Duration>,
     }
 
     impl MockTransport {
@@ -813,6 +828,7 @@ mod tests {
                 link_events: Vec::new(),
                 status_read_count: 0,
                 status_faults: Vec::new(),
+                drain_timeout: None,
             }
         }
 
@@ -908,6 +924,8 @@ mod tests {
             }
             Ok(bytes)
         }
+
+        fn window_drain_timeout(&self) -> Option<Duration> { self.drain_timeout }
 
         fn write_finish(&mut self, packet: &[u8; CONTROL_BYTES]) -> Result<(), String> {
             assert_eq!(packet[4], OP_FINISH);
@@ -1178,6 +1196,45 @@ mod tests {
         let report = transfer(&mut transport,&firmware,options(),|_,_|{}).unwrap();
         assert_eq!(transport.image,firmware);
         assert!(report.finish_confirmed && !transport.aborted);
+    }
+
+    #[test]
+    fn slow_durable_window_does_not_rewind_while_retained_work_finishes() {
+        let firmware: Vec<u8> = (0..31).collect();
+        let mut transport = MockTransport::new();
+        transport.drain_timeout = Some(Duration::from_secs(2));
+        // BEGIN is read1. The complete first window is retained by the
+        // receiver, but erase/program has not yet published its durable end.
+        transport.status_faults = (2..=8).map(|n|(n,StatusFault::Cursor(0))).collect();
+        let report = transfer(&mut transport,&firmware,options(),|_,_|{}).unwrap();
+        assert_eq!(report.recovered_offsets,0,"A few stale polls must not resend an accepted window");
+        assert_eq!(report.data_writes,7);
+        assert_eq!(transport.image,firmware);
+        assert!(report.finish_confirmed && !transport.aborted);
+    }
+
+    #[test]
+    fn durable_window_deadline_does_not_mask_late_device_error() {
+        let firmware: Vec<u8> = (0..31).collect();
+        let mut transport = MockTransport::new();
+        transport.drain_timeout = Some(Duration::from_secs(2));
+        transport.status_faults = (2..=7).map(|n|(n,StatusFault::Cursor(0))).collect();
+        transport.status_faults.push((8,StatusFault::Error(ERROR_STORAGE_BEGIN)));
+        let error=transfer(&mut transport,&firmware,options(),|_,_|{}).unwrap_err();
+        assert_eq!(error.phase,TransferPhase::Device);
+        assert_eq!(transport.writes,3,"No replay or next-window DATA while awaiting durability");
+        assert!(transport.aborted && !transport.finished);
+    }
+
+    #[test]
+    fn durable_window_deadline_still_bounds_stalled_receiver() {
+        let firmware: Vec<u8> = (0..31).collect();
+        let mut transport = MockTransport::new();
+        transport.drain_timeout = Some(Duration::from_millis(50));
+        transport.status_faults = (2..=600).map(|n|(n,StatusFault::Cursor(0))).collect();
+        let mut clock=FakeClock::new(Duration::from_millis(20));
+        assert!(transfer_with_clock(&mut transport,&firmware,options(),&mut clock,|_,_|{}).is_err());
+        assert!(transport.status_read_count<100 && transport.aborted && !transport.finished);
     }
 
     #[test]
