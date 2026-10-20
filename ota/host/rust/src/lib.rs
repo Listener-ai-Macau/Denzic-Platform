@@ -411,7 +411,7 @@ impl<'a, T: OtaV1Transport, C: OtaClock> OtaTransferEngine<'a, T, C> {
             .map_err(|error| self.fail(TransferPhase::Begin, error))?;
 
         let initial = self
-            .read_status_with_retry()
+            .read_status_after_begin()
             .map_err(|error| self.fail_abort(TransferPhase::StatusRead, error))?;
         validate_receiving_status(initial, expected_size)
             .map_err(|error| self.fail(TransferPhase::Device, error))?;
@@ -633,6 +633,14 @@ impl<'a, T: OtaV1Transport, C: OtaClock> OtaTransferEngine<'a, T, C> {
     }
 
     fn read_status_with_retry(&mut self) -> Result<OtaStatus, String> {
+        self.read_status_with_retry_mode(false)
+    }
+
+    fn read_status_after_begin(&mut self) -> Result<OtaStatus, String> {
+        self.read_status_with_retry_mode(true)
+    }
+
+    fn read_status_with_retry_mode(&mut self, wait_for_begin: bool) -> Result<OtaStatus, String> {
         let attempts = self.options.status_read_attempts;
         let mut last_error = None;
         for attempt in 0..attempts {
@@ -641,6 +649,21 @@ impl<'a, T: OtaV1Transport, C: OtaClock> OtaTransferEngine<'a, T, C> {
                 .timed_status_read()
                 .and_then(|bytes| parse_status(&bytes))
             {
+                Ok(status) if wait_for_begin
+                    && status.state == STATE_IDLE
+                    && status.last_error == ERROR_NONE
+                    && status.bytes_written == 0
+                    && status.expected_size == 0 => {
+                    // ATT acknowledged the control write, but a cooperative
+                    // receiver may not have run its queued BEGIN yet. Only
+                    // this empty initial state is pending. Keep one read
+                    // budget, never resend BEGIN or send DATA before the
+                    // RECEIVING identity has been validated by the caller.
+                    last_error = Some("BEGIN not yet reflected in receiver status".to_string());
+                    if attempt + 1 < attempts {
+                        self.timed_status_retry_wait(attempt + 1);
+                    }
+                }
                 Ok(status) => return Ok(status),
                 Err(error) => {
                     last_error = Some(error);
@@ -740,6 +763,7 @@ mod tests {
     }
 
     enum StatusFault {
+        IdlePending,
         Cursor(u32),
         Error(u8),
         ImageSize(u32),
@@ -870,6 +894,11 @@ mod tests {
             for (read, fault) in &self.status_faults {
                 if *read != self.status_read_count { continue; }
                 match fault {
+                    StatusFault::IdlePending => {
+                        bytes[5] = STATE_IDLE;
+                        bytes[6] = ERROR_NONE;
+                        bytes[8..16].fill(0);
+                    },
                     StatusFault::Cursor(offset) => bytes[8..12].copy_from_slice(&offset.to_le_bytes()),
                     StatusFault::Error(error) => {bytes[5] = STATE_ERROR;bytes[6] = *error;},
                     StatusFault::ImageSize(size) => bytes[12..16].copy_from_slice(&size.to_le_bytes()),
@@ -924,6 +953,49 @@ mod tests {
             inactive_link_window_chunks: Some(1),
             prefer_dual_lane: true,
         }
+    }
+
+    #[test]
+    fn begin_receipt_waits_for_deferred_worker_without_rewriting_begin() {
+        let mut transport = MockTransport::new();
+        transport.status_faults = vec![(1, StatusFault::IdlePending), (2, StatusFault::IdlePending)];
+        let report = transfer(&mut transport, b"0123456", options(), |_, _| {}).unwrap();
+        assert_eq!(report.status_reads, 4);
+        assert_eq!(transport.image, b"0123456");
+        assert_eq!(transport.link_events.iter().filter(|e| **e == LinkEvent::Begin).count(), 1);
+        assert!(transport.finished);
+    }
+
+    #[test]
+    fn begin_receipt_idle_and_transport_error_share_one_read_budget() {
+        let mut transport = MockTransport::new();
+        transport.status_faults = vec![(1, StatusFault::Unavailable), (2, StatusFault::IdlePending), (3, StatusFault::IdlePending)];
+        let error = transfer(&mut transport, b"0123456", options(), |_, _| {}).unwrap_err();
+        assert_eq!(error.phase, TransferPhase::StatusRead);
+        assert_eq!(transport.status_read_count, 3);
+        assert!(transport.image.is_empty());
+        assert!(!transport.finished);
+        assert_eq!(transport.link_events.iter().filter(|e| **e == LinkEvent::Begin).count(), 1);
+    }
+
+    #[test]
+    fn begin_receipt_device_error_is_not_polled_as_pending() {
+        let mut transport = MockTransport::new();
+        transport.status_faults = vec![(1, StatusFault::Error(ERROR_STORAGE_BEGIN))];
+        let error = transfer(&mut transport, b"0123456", options(), |_, _| {}).unwrap_err();
+        assert_eq!(error.phase, TransferPhase::Device);
+        assert_eq!(transport.status_read_count, 1);
+        assert!(transport.image.is_empty());
+    }
+
+    #[test]
+    fn begin_receipt_idle_after_data_is_a_real_failure() {
+        let mut transport = MockTransport::new();
+        transport.status_faults = vec![(2, StatusFault::IdlePending)];
+        let error = transfer(&mut transport, b"0123456", options(), |_, _| {}).unwrap_err();
+        assert_eq!(error.phase, TransferPhase::Device);
+        assert_eq!(transport.status_read_count, 2);
+        assert!(!transport.finished);
     }
 
     #[test]
