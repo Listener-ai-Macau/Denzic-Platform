@@ -68,6 +68,8 @@ pub struct CaptureOptions {
 
 /// Running capture session. The cpal stream lives on a dedicated thread
 /// (cpal streams are `!Send`); `stop` signals the thread and joins it.
+/// Dropping the owner requests cancellation without waiting for a potentially
+/// blocked device driver. Use `stop` for synchronous release and error reporting.
 pub struct CaptureSession {
     stop_flag: Arc<AtomicBool>,
     join_handle: Option<JoinHandle<Result<(), CaptureError>>>,
@@ -82,23 +84,36 @@ impl CaptureSession {
     where
         F: Fn(&[f32], u32) + Send + Sync + 'static,
     {
+        Self::start_worker(STARTUP_TIMEOUT, move |stop, startup| {
+            run_capture_thread(options, Arc::new(sink), stop, startup)
+        })
+    }
+
+    fn start_worker<F>(startup_timeout: Duration, worker: F) -> Result<Self, CaptureError>
+    where
+        F: FnOnce(Arc<AtomicBool>, mpsc::Sender<Result<(), CaptureError>>)
+                -> Result<(), CaptureError> + Send + 'static,
+    {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let stop_for_thread = Arc::clone(&stop_flag);
         let (startup_tx, startup_rx) = mpsc::channel::<Result<(), CaptureError>>();
 
         let join_handle = thread::Builder::new()
             .name("denzic-host-audio-capture".to_string())
-            .spawn(move || run_capture_thread(options, Arc::new(sink), stop_for_thread, startup_tx))
+            .spawn(move || worker(stop_for_thread, startup_tx))
             .map_err(|err| CaptureError::SpawnThread(err.to_string()))?;
 
-        startup_rx
-            .recv_timeout(STARTUP_TIMEOUT)
-            .map_err(|err| CaptureError::StartupTimeout(err.to_string()))??;
-
-        Ok(Self {
+        // Establish the owner before the fallible handshake. Every timeout or
+        // startup error now drops it and signals the still-starting worker.
+        let session = Self {
             stop_flag,
             join_handle: Some(join_handle),
-        })
+        };
+        startup_rx
+            .recv_timeout(startup_timeout)
+            .map_err(|err| CaptureError::StartupTimeout(err.to_string()))??;
+
+        Ok(session)
     }
 
     pub fn stop(mut self) -> Result<(), CaptureError> {
@@ -109,6 +124,14 @@ impl CaptureSession {
             .join()
             .map_err(|_| CaptureError::ThreadPanicked)??;
         Ok(())
+    }
+}
+
+impl Drop for CaptureSession {
+    fn drop(&mut self) {
+        // Do not join here: a driver may still be blocked in device creation,
+        // or the last owner may be dropped by a capture callback itself.
+        self.stop_flag.store(true, Ordering::SeqCst);
     }
 }
 
@@ -151,6 +174,9 @@ fn run_capture_thread(
     stop_flag: Arc<AtomicBool>,
     startup_tx: mpsc::Sender<Result<(), CaptureError>>,
 ) -> Result<(), CaptureError> {
+    if stop_flag.load(Ordering::SeqCst) {
+        return Ok(());
+    }
     let host = cpal::default_host();
     let device = match select_input_device(&host, options.device_name.as_deref()) {
         Ok(device) => device,
@@ -168,20 +194,31 @@ fn run_capture_thread(
         }
     };
 
+    if stop_flag.load(Ordering::SeqCst) {
+        return Ok(());
+    }
     let stream_config: StreamConfig = supported_config.clone().into();
     let sample_rate = stream_config.sample_rate.0;
     let channels = stream_config.channels as usize;
     let on_stream_error = options.on_stream_error.clone();
     let last_callback = Arc::new(Mutex::new(None::<Instant>));
     let last_callback_for_sink = Arc::clone(&last_callback);
+    let stop_for_sink = Arc::clone(&stop_flag);
     let sink: Arc<dyn Fn(&[f32], u32) + Send + Sync> =
         Arc::new(move |samples: &[f32], rate: u32| {
+            if stop_for_sink.load(Ordering::SeqCst) {
+                return;
+            }
             if let Ok(mut slot) = last_callback_for_sink.lock() {
                 *slot = Some(Instant::now());
             }
             sink(samples, rate);
         });
+    let stop_for_error = Arc::clone(&stop_flag);
     let err_fn = move |err: cpal::StreamError| {
+        if stop_for_error.load(Ordering::SeqCst) {
+            return;
+        }
         if let Some(handler) = &on_stream_error {
             handler(err.to_string());
         }
@@ -247,12 +284,20 @@ fn run_capture_thread(
         }
     };
 
+    // A timed-out caller cannot interrupt an OS build call. Once it returns,
+    // dispose of the stream instead of starting capture for an absent owner.
+    if stop_flag.load(Ordering::SeqCst) {
+        return Ok(());
+    }
     if let Err(err) = stream.play() {
         let err = classify_startup_error(err.to_string(), CaptureError::StartInputStream);
         let _ = startup_tx.send(Err(err.clone()));
         return Err(err);
     }
-    let _ = startup_tx.send(Ok(()));
+    if stop_flag.load(Ordering::SeqCst) || startup_tx.send(Ok(())).is_err() {
+        let _ = stream.pause();
+        return Ok(());
+    }
 
     let watchdog_start = Instant::now();
     let mut next_watchdog_check = watchdog_start + CALLBACK_WATCHDOG_INTERVAL;
@@ -412,6 +457,89 @@ impl SampleToF32 for u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_timeout_cancels_a_worker_still_waiting_in_the_driver() {
+        let (seen_tx, seen_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (exit_tx, exit_rx) = mpsc::channel();
+        let result = CaptureSession::start_worker(Duration::from_millis(30), move |stop, startup| {
+            seen_tx.send(Arc::clone(&stop)).unwrap();
+            release_rx.recv().unwrap();
+            let _ = startup.send(Ok(()));
+            exit_tx.send(()).unwrap();
+            Ok(())
+        });
+        let stop = seen_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let cancelled_before_driver_return = stop.load(Ordering::SeqCst);
+        release_tx.send(()).unwrap();
+        exit_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(matches!(result, Err(CaptureError::StartupTimeout(_))));
+        assert!(cancelled_before_driver_return);
+    }
+
+    #[test]
+    fn drop_cancels_without_joining_a_blocked_worker() {
+        let (seen_tx, seen_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (exit_tx, exit_rx) = mpsc::channel();
+        let session = CaptureSession::start_worker(Duration::from_secs(2), move |stop, startup| {
+            seen_tx.send(Arc::clone(&stop)).unwrap();
+            startup.send(Ok(())).unwrap();
+            release_rx.recv().unwrap();
+            exit_tx.send(()).unwrap();
+            Ok(())
+        }).unwrap();
+        let stop = seen_rx.recv().unwrap();
+        let (dropped_tx, dropped_rx) = mpsc::channel();
+        let dropper = thread::spawn(move || { drop(session); dropped_tx.send(()).unwrap(); });
+        let nonblocking = dropped_rx.recv_timeout(Duration::from_secs(1)).is_ok();
+        let cancelled = stop.load(Ordering::SeqCst);
+        release_tx.send(()).unwrap();
+        exit_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        dropper.join().unwrap();
+        assert!(nonblocking);
+        assert!(cancelled);
+    }
+
+    #[test]
+    fn startup_failure_preserves_its_error_and_cancels_the_owner() {
+        let (seen_tx, seen_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let result = CaptureSession::start_worker(Duration::from_secs(2), move |stop, startup| {
+            seen_tx.send(stop).unwrap();
+            startup.send(Err(CaptureError::PermissionDenied)).unwrap();
+            release_rx.recv().unwrap();
+            Ok(())
+        });
+        let cancelled = seen_rx.recv().unwrap().load(Ordering::SeqCst);
+        release_tx.send(()).unwrap();
+        assert!(matches!(result, Err(CaptureError::PermissionDenied)));
+        assert!(cancelled);
+    }
+
+    #[test]
+    fn explicit_stop_still_waits_for_worker_completion() {
+        let (exit_tx, exit_rx) = mpsc::channel();
+        let session = CaptureSession::start_worker(Duration::from_secs(2), move |stop, startup| {
+            startup.send(Ok(())).unwrap();
+            while !stop.load(Ordering::SeqCst) { thread::yield_now(); }
+            exit_tx.send(()).unwrap();
+            Ok(())
+        }).unwrap();
+        session.stop().unwrap();
+        assert!(exit_rx.try_recv().is_ok());
+    }
+
+    #[test]
+    fn explicit_stop_reports_the_worker_error() {
+        let session = CaptureSession::start_worker(Duration::from_secs(2), move |stop, startup| {
+            startup.send(Ok(())).unwrap();
+            while !stop.load(Ordering::SeqCst) { thread::yield_now(); }
+            Err(CaptureError::StartInputStream("controlled worker failure".into()))
+        }).unwrap();
+        assert!(matches!(session.stop(), Err(CaptureError::StartInputStream(message)) if message == "controlled worker failure"));
+    }
 
     #[test]
     fn downmix_averages_interleaved_frames() {
