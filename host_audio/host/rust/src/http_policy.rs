@@ -81,15 +81,29 @@ pub fn endpoint(value: &str) -> Result<Url, Failure> {
 }
 
 pub fn client(timeout: Duration) -> Result<Client, Failure> {
+    client_with_proxy_policy(timeout, false)
+}
+
+/// An explicitly local service must not be sent through an external proxy.
+/// All other destinations retain reqwest's existing system/environment routing.
+pub fn client_for_endpoint(timeout: Duration, endpoint: &Url) -> Result<Client, Failure> {
+    let local = endpoint.host_str().is_some_and(|host| {
+        host.eq_ignore_ascii_case("localhost") || host.trim_matches(['[', ']'])
+            .parse::<std::net::IpAddr>().is_ok_and(|address| address.is_loopback())
+    });
+    client_with_proxy_policy(timeout, local)
+}
+
+fn client_with_proxy_policy(timeout: Duration, local: bool) -> Result<Client, Failure> {
     if timeout.is_zero() || timeout > Duration::from_secs(300) {
         return Err(Failure::Configuration);
     }
-    Client::builder()
+    let builder = Client::builder()
         .connect_timeout(CONNECT_TIMEOUT.min(timeout))
         .timeout(timeout)
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(Failure::from_reqwest)
+        .redirect(reqwest::redirect::Policy::none());
+    let builder = if local { builder.no_proxy() } else { builder };
+    builder.build().map_err(Failure::from_reqwest)
 }
 
 pub fn response_json(response: Response, limit: u64) -> Result<Value, Failure> {

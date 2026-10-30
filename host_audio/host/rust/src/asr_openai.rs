@@ -100,7 +100,7 @@ impl BatchAsrProvider for OpenAiCompatibleAsr {
                     format!("attach audio file {}: {err}", audio.display()),
                 )
             })?;
-        let response = http_policy::client(self.config.timeout).map_err(safe_http_error)?
+        let response = http_policy::client_for_endpoint(self.config.timeout, &endpoint).map_err(safe_http_error)?
             .post(endpoint)
             .bearer_auth(&self.config.api_key)
             .multipart(form)
