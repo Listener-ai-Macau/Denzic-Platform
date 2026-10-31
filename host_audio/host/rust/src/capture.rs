@@ -32,10 +32,14 @@ pub enum CaptureError {
     PermissionDenied,
     #[error("no default input microphone")]
     NoDefaultInputDevice,
+    #[error("no default output device")]
+    NoDefaultOutputDevice,
     #[error("input_devices: {0}")]
     ListInputDevices(String),
     #[error("read default input config: {0}")]
     DefaultInputConfig(String),
+    #[error("read default output config: {0}")]
+    DefaultOutputConfig(String),
     #[error("build input stream: {0}")]
     BuildInputStream(String),
     #[error("start input stream: {0}")]
@@ -73,6 +77,23 @@ pub struct CaptureSession {
     join_handle: Option<JoinHandle<Result<(), CaptureError>>>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CaptureSource {
+    Microphone,
+    #[cfg(all(target_os = "windows", feature = "wasapi-packet-flags"))]
+    SystemOutput,
+}
+
+// Timestamp is the estimated instant of the first frame, or None when the
+// backend does not provide a usable timestamp. Consumers combining tracks
+// must preserve gaps and must not invent timestamps when one is unavailable.
+#[derive(Clone, Copy, Debug)]
+pub struct TimedCaptureInfo {
+    pub captured_at: Option<Instant>,
+    pub discontinuity: bool,
+}
+type TimedSink = Arc<dyn Fn(&[f32], u32, TimedCaptureInfo) + Send + Sync>;
+
 impl CaptureSession {
     /// Start capturing. `sink` is invoked from the audio callback with mono
     /// f32 frames and the device sample rate. Startup errors (no device,
@@ -82,13 +103,37 @@ impl CaptureSession {
     where
         F: Fn(&[f32], u32) + Send + Sync + 'static,
     {
+        Self::start_timed_microphone(options, move |samples, rate, _| sink(samples, rate))
+    }
+
+    /// Capture a microphone with timestamps for aligning separate tracks.
+    pub fn start_timed_microphone<F>(options: CaptureOptions, sink: F) -> Result<Self, CaptureError>
+    where
+        F: Fn(&[f32], u32, TimedCaptureInfo) + Send + Sync + 'static,
+    {
+        Self::start_with_source(options, CaptureSource::Microphone, Arc::new(sink))
+    }
+
+    /// Experimental; not yet connected to product capture or end-to-end tested.
+    /// Capture the default Windows output mix only when explicitly selected.
+    /// The mix can contain audio from other applications; silence may produce
+    /// no callback. Callers must preserve elapsed time, including silent gaps.
+    #[cfg(all(target_os = "windows", feature = "wasapi-packet-flags"))]
+    pub fn start_timed_system_output<F>(options: CaptureOptions, sink: F) -> Result<Self, CaptureError>
+    where
+        F: Fn(&[f32], u32, TimedCaptureInfo) + Send + Sync + 'static,
+    {
+        Self::start_with_source(options, CaptureSource::SystemOutput, Arc::new(sink))
+    }
+
+    fn start_with_source(options: CaptureOptions, source: CaptureSource, sink: TimedSink) -> Result<Self, CaptureError> {
         let stop_flag = Arc::new(AtomicBool::new(false));
         let stop_for_thread = Arc::clone(&stop_flag);
         let (startup_tx, startup_rx) = mpsc::channel::<Result<(), CaptureError>>();
 
         let join_handle = thread::Builder::new()
             .name("denzic-host-audio-capture".to_string())
-            .spawn(move || run_capture_thread(options, Arc::new(sink), stop_for_thread, startup_tx))
+            .spawn(move || run_capture_thread(options, source, sink, stop_for_thread, startup_tx))
             .map_err(|err| CaptureError::SpawnThread(err.to_string()))?;
 
         startup_rx
@@ -147,22 +192,34 @@ pub fn downmix_to_mono(interleaved: &[f32], channels: usize) -> Vec<f32> {
 
 fn run_capture_thread(
     options: CaptureOptions,
-    sink: Arc<dyn Fn(&[f32], u32) + Send + Sync>,
+    source: CaptureSource,
+    sink: TimedSink,
     stop_flag: Arc<AtomicBool>,
     startup_tx: mpsc::Sender<Result<(), CaptureError>>,
 ) -> Result<(), CaptureError> {
     let host = cpal::default_host();
-    let device = match select_input_device(&host, options.device_name.as_deref()) {
+    let device = match source {
+        CaptureSource::Microphone => select_input_device(&host, options.device_name.as_deref()),
+        #[cfg(all(target_os = "windows", feature = "wasapi-packet-flags"))]
+        CaptureSource::SystemOutput => host.default_output_device().ok_or(CaptureError::NoDefaultOutputDevice),
+    };
+    let device = match device {
         Ok(device) => device,
         Err(err) => {
             let _ = startup_tx.send(Err(err.clone()));
             return Err(err);
         }
     };
-    let supported_config = match device.default_input_config() {
+    let config = match source {
+        CaptureSource::Microphone => device.default_input_config().map_err(|err|
+            classify_startup_error(err.to_string(), CaptureError::DefaultInputConfig)),
+        #[cfg(all(target_os = "windows", feature = "wasapi-packet-flags"))]
+        CaptureSource::SystemOutput => device.default_output_config().map_err(|err|
+            classify_startup_error(err.to_string(), CaptureError::DefaultOutputConfig)),
+    };
+    let supported_config = match config {
         Ok(config) => config,
         Err(err) => {
-            let err = classify_startup_error(err.to_string(), CaptureError::DefaultInputConfig);
             let _ = startup_tx.send(Err(err.clone()));
             return Err(err);
         }
@@ -174,12 +231,12 @@ fn run_capture_thread(
     let on_stream_error = options.on_stream_error.clone();
     let last_callback = Arc::new(Mutex::new(None::<Instant>));
     let last_callback_for_sink = Arc::clone(&last_callback);
-    let sink: Arc<dyn Fn(&[f32], u32) + Send + Sync> =
-        Arc::new(move |samples: &[f32], rate: u32| {
+    let sink: TimedSink =
+        Arc::new(move |samples: &[f32], rate: u32, captured_at: TimedCaptureInfo| {
             if let Ok(mut slot) = last_callback_for_sink.lock() {
                 *slot = Some(Instant::now());
             }
-            sink(samples, rate);
+            sink(samples, rate, captured_at);
         });
     let err_fn = move |err: cpal::StreamError| {
         if let Some(handler) = &on_stream_error {
@@ -263,7 +320,7 @@ fn run_capture_thread(
             break;
         }
         let now = Instant::now();
-        if !liveness_reported && now >= next_watchdog_check {
+        if source == CaptureSource::Microphone && !liveness_reported && now >= next_watchdog_check {
             next_watchdog_check = now + CALLBACK_WATCHDOG_INTERVAL;
             let callback_time = last_callback.lock().ok().and_then(|slot| *slot);
             if let Some(message) = liveness_failure_message(watchdog_start, callback_time, now) {
@@ -343,7 +400,7 @@ fn build_stream<T>(
     config: &StreamConfig,
     channels: usize,
     sample_rate: u32,
-    sink: &Arc<dyn Fn(&[f32], u32) + Send + Sync>,
+    sink: &TimedSink,
     err_fn: impl Fn(cpal::StreamError) + Send + 'static,
 ) -> Result<cpal::Stream, CaptureError>
 where
@@ -353,9 +410,21 @@ where
     device
         .build_input_stream(
             config,
-            move |data: &[T], _| {
+            move |data: &[T], info| {
                 let mono = downmix_to_mono(&samples_to_f32(data), channels);
-                sink(&mono, sample_rate);
+                let timestamp = info.timestamp();
+                #[cfg(all(target_os = "windows", feature = "wasapi-packet-flags"))]
+                let flags = info.wasapi_flags();
+                #[cfg(not(all(target_os = "windows", feature = "wasapi-packet-flags")))]
+                let flags = 0u32;
+                let captured_at = timestamp.callback.duration_since(&timestamp.capture)
+                    .and_then(|delay| Instant::now().checked_sub(delay));
+                // WASAPI bit 4 means the packet timestamp is unreliable.
+                let captured_at = if flags & 4 != 0 { None } else { captured_at };
+                sink(&mono, sample_rate, TimedCaptureInfo {
+                    captured_at,
+                    discontinuity: flags & 1 != 0,
+                });
             },
             err_fn,
             None,

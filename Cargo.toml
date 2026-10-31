@@ -14,3 +14,7 @@ members = [
     "voice_activation/host/rust",
 ]
 resolver = "2"
+exclude = ["third_party/cpal"]
+
+[patch.crates-io]
+cpal = { path = "third_party/cpal" }
