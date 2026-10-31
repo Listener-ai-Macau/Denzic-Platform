@@ -84,13 +84,37 @@ enum CaptureSource {
     SystemOutput,
 }
 
-// Timestamp is the estimated instant of the first frame, or None when the
-// backend does not provide a usable timestamp. Consumers combining tracks
-// must preserve gaps and must not invent timestamps when one is unavailable.
+// Timestamp is the backend clock value for the first frame, or None when the
+// backend reports it unreliable. On Windows WASAPI, both streams use QPC, so
+// their capture timestamps can be compared without callback scheduling jitter.
 #[derive(Clone, Copy, Debug)]
 pub struct TimedCaptureInfo {
-    pub captured_at: Option<Instant>,
+    pub captured_at: Option<cpal::StreamInstant>,
     pub discontinuity: bool,
+}
+
+impl TimedCaptureInfo {
+    /// Position relative to another packet on the shared Windows QPC clock.
+    /// A negative value means this packet began before the chosen origin.
+    /// None keeps an invalid timestamp or an unrepresentable offset explicit.
+    #[cfg(all(target_os = "windows", feature = "wasapi-packet-flags"))]
+    pub fn sample_offset_since(&self, origin: &Self, rate: u32) -> Option<i64> {
+        if rate == 0 { return None; }
+        let captured = self.captured_at?;
+        let origin = origin.captured_at?;
+        if let Some(elapsed) = captured.duration_since(&origin) {
+            duration_samples(elapsed, rate)
+        } else {
+            duration_samples(origin.duration_since(&captured)?, rate)?.checked_neg()
+        }
+    }
+}
+
+#[cfg(all(target_os = "windows", feature = "wasapi-packet-flags"))]
+fn duration_samples(elapsed: Duration, rate: u32) -> Option<i64> {
+    let numerator = elapsed.as_nanos().checked_mul(u128::from(rate))?;
+    let rounded = numerator.checked_add(500_000_000)? / 1_000_000_000;
+    i64::try_from(rounded).ok()
 }
 type TimedSink = Arc<dyn Fn(&[f32], u32, TimedCaptureInfo) + Send + Sync>;
 
@@ -417,10 +441,8 @@ where
                 let flags = info.wasapi_flags();
                 #[cfg(not(all(target_os = "windows", feature = "wasapi-packet-flags")))]
                 let flags = 0u32;
-                let captured_at = timestamp.callback.duration_since(&timestamp.capture)
-                    .and_then(|delay| Instant::now().checked_sub(delay));
                 // WASAPI bit 4 means the packet timestamp is unreliable.
-                let captured_at = if flags & 4 != 0 { None } else { captured_at };
+                let captured_at = if flags & 4 != 0 { None } else { Some(timestamp.capture) };
                 sink(&mono, sample_rate, TimedCaptureInfo {
                     captured_at,
                     discontinuity: flags & 1 != 0,
@@ -481,6 +503,14 @@ impl SampleToF32 for u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(all(target_os = "windows", feature = "wasapi-packet-flags"))]
+    #[test]
+    fn qpc_duration_to_samples_keeps_long_recording_precision() {
+        assert_eq!(duration_samples(Duration::from_secs(7200), 16_000), Some(115_200_000));
+        assert_eq!(duration_samples(Duration::from_micros(63), 16_000), Some(1));
+        assert_eq!(duration_samples(Duration::MAX, u32::MAX), None);
+    }
 
     #[test]
     fn downmix_averages_interleaved_frames() {
